@@ -391,6 +391,7 @@ const caixasLojas = () => [...document.querySelectorAll('#lojasBusca input[name=
 async function carregarLojasBusca() {
   const aviso = $('#lojasBuscaAviso');
   try {
+    if (!TEM_SERVIDOR) throw new Error();
     const res = await fetch('/api/config', { cache: 'no-store' });
     if (!res.ok) throw new Error();
     const { lojas } = await res.json();
@@ -487,6 +488,7 @@ setInterval(() => { if (!document.hidden && lerJSON(PEDIDO_REMOTO_KEY, 0)) syncN
 
 // O server.py (no PC) usa o mesmo Gist para publicar as buscas e receber pedidos do celular
 async function enviarGistAoServidor(gist = Sync.enabled() ? Sync.config() : null) {
+  if (!TEM_SERVIDOR) return;
   try {
     await fetch('/api/config', {
       method: 'POST',
@@ -854,6 +856,8 @@ window.Rastreazera = { iniciarBusca, registrarFalhaBusca, finalizarBusca };
 // /api/busca/estado → "ultima" e é importada aqui (uma notificação no 🔔). Buscas que terminaram com o
 // site fechado são importadas ao abrir. O botão "Buscar pedidos" pede uma busca na hora.
 const BUSCA_API = '/api/busca';
+// server.py só existe no PC (localhost); no site publicado tudo passa pelo Gist
+const TEM_SERVIDOR = ['localhost', '127.0.0.1'].includes(location.hostname);
 const BUSCA_VISTA_KEY = 'rastreazera:buscaVista';
 const CHECAR_BUSCA_MS = 60000; // sem busca em andamento
 const CHECAR_BUSCA_RAPIDO_MS = 4000; // durante uma busca
@@ -924,6 +928,7 @@ function mostrarProgressoBusca(estado) {
 
 async function checarBusca() {
   clearTimeout(buscaTimer);
+  if (!TEM_SERVIDOR) return; // site publicado: as buscas chegam pelo Gist (syncNow)
   let estado = null;
   try {
     const res = await fetch(`${BUSCA_API}/estado`, { cache: 'no-store' });
@@ -954,7 +959,7 @@ async function checarBusca() {
 
 async function buscarAgora() {
   let lojas = null;
-  try {
+  if (TEM_SERVIDOR) try {
     const res = await fetch('/api/config', { cache: 'no-store' });
     if (res.ok) lojas = (await res.json()).lojas;
   } catch { /* sem server.py */ }
