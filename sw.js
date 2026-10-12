@@ -1,5 +1,5 @@
 ﻿// Cache simples para o app abrir rápido e funcionar offline (os dados ficam no localStorage).
-const CACHE = 'rastreazera-v12';
+const CACHE = 'rastreazera-v13';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'carriers.js', 'sync.js', 'trackers.js', 'coletor/coletores.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -16,8 +16,13 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  // "no-cache": sempre confere com o servidor se há versão nova (o GitHub Pages deixa o
+  // navegador guardar os arquivos por 10 min — sem isso, uma atualização demoraria a chegar)
+  const atualizado = e.request.mode === 'navigate'
+    ? fetch(e.request.url, { cache: 'no-cache', credentials: 'same-origin' })
+    : fetch(e.request, { cache: 'no-cache' });
   e.respondWith(
-    fetch(e.request)
+    atualizado
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
