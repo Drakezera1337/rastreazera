@@ -1,0 +1,1022 @@
+﻿const STORAGE_KEY = 'rastreazera:pacotes';
+
+const STATUS = {
+  aguardando: { label: 'Aguardando postagem', icon: '🕓' },
+  transito: { label: 'Em trânsito', icon: '🚚' },
+  fiscalizacao: { label: 'Fiscalização / taxado', icon: '🛃' },
+  saiu: { label: 'Saiu para entrega', icon: '📍' },
+  entregue: { label: 'Entregue', icon: '✅' },
+  problema: { label: 'Problema', icon: '⚠️' },
+};
+
+const $ = (sel) => document.querySelector(sel);
+const state = {
+  items: load(), // inclui itens apagados (deleted: true) para a sincronização saber da exclusão
+  filter: 'ativos',
+  query: '',
+};
+
+// ---------- Persistência ----------
+function load() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
+}
+function save({ sync = true } = {}) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.items));
+  render();
+  if (sync) scheduleSync();
+}
+function visibleItems() {
+  return state.items.filter((p) => !p.deleted);
+}
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+// ---------- Renderização ----------
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+function fmtDate(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+function fmtDateTime(ts) {
+  return new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function daysSince(ts) {
+  return Math.floor((Date.now() - ts) / 86400000);
+}
+
+function matchesFilter(p) {
+  switch (state.filter) {
+    case 'ativos': return p.status !== 'entregue';
+    case 'entregue': return p.status === 'entregue';
+    case 'problema': return p.status === 'problema' || p.status === 'fiscalizacao';
+    default: return true;
+  }
+}
+function matchesQuery(p) {
+  if (!state.query) return true;
+  const q = state.query.toLowerCase();
+  return [p.name, p.code, p.store, p.notes, CARRIERS[p.carrier]?.name].some((v) => String(v || '').toLowerCase().includes(q));
+}
+
+function render() {
+  const all = visibleItems();
+  const list = all
+    .filter(matchesFilter)
+    .filter(matchesQuery)
+    .sort((a, b) => (a.status === 'entregue') - (b.status === 'entregue') || b.createdAt - a.createdAt);
+
+  const ativos = all.filter((p) => p.status !== 'entregue').length;
+  $('#stats').innerHTML = all.length
+    ? `<span><strong>${ativos}</strong> a caminho</span><span><strong>${all.length - ativos}</strong> entregue(s)</span>`
+    : '';
+
+  if (!list.length) {
+    $('#list').innerHTML = all.length
+      ? '<p class="empty">Nenhum rastreio neste filtro.</p>'
+      : `<div class="empty">
+           <p class="empty-big">📦</p>
+           <p>Nenhum rastreio ainda.</p>
+           <p>Toque em <strong>＋</strong> e cole o código de rastreio.</p>
+         </div>`;
+    return;
+  }
+
+  $('#list').innerHTML = list.map(cardHtml).join('');
+}
+
+function cardHtml(p) {
+  const carrier = CARRIERS[p.carrier] || CARRIERS.outra;
+  const status = STATUS[p.status] || STATUS.aguardando;
+  const age = daysSince(p.createdAt);
+  const eta = p.eta ? `· previsão ${new Date(p.eta + 'T12:00').toLocaleDateString('pt-BR')}` : '';
+  return `
+    <article class="card status-${p.status}" data-id="${p.id}">
+      <div class="card-head">
+        <div>
+          <h3>${esc(p.name || 'Sem nome')}</h3>
+          <p class="meta">
+            <span class="badge" style="--c:${carrier.color}">${esc(carrier.name)}</span>
+            ${p.store ? `<span class="store">${esc(p.store)}</span>` : ''}
+          </p>
+        </div>
+        <select class="status-select" data-action="status" aria-label="Status">
+          ${Object.entries(STATUS).map(([k, s]) => `<option value="${k}" ${k === p.status ? 'selected' : ''}>${s.icon} ${s.label}</option>`).join('')}
+        </select>
+      </div>
+      <button class="code" data-action="copy" title="Copiar código">${esc(p.code)} <span aria-hidden="true">⧉</span></button>
+      ${p.lastEvent ? `<p class="last-event">${esc(p.lastEvent.text)}<span>${fmtDateTime(p.lastEvent.time)}</span></p>` : ''}
+      ${p.notes ? `<p class="notes">${esc(p.notes)}</p>` : ''}
+      <p class="dates">Adicionado em ${fmtDate(p.createdAt)} (${age} dia${age === 1 ? '' : 's'}) ${eta}</p>
+      <div class="card-actions">
+        <button class="btn small primary" data-action="track">Ver rastreio</button>
+        <a class="btn small" href="${carrier.url(p.code)}" target="_blank" rel="noopener">Site oficial</a>
+        <button class="btn small ghost" data-action="edit">Editar</button>
+        <button class="btn small ghost danger" data-action="delete">Excluir</button>
+      </div>
+    </article>`;
+}
+
+// ---------- Formulário ----------
+const dlg = $('#dlgPacote');
+const form = $('#formPacote');
+
+function fillSelects() {
+  $('#carrierSelect').innerHTML =
+    '<option value="">Detectar automaticamente</option>' +
+    Object.entries(CARRIERS).map(([k, c]) => `<option value="${k}">${c.name}</option>`).join('');
+  $('#statusSelect').innerHTML = Object.entries(STATUS).map(([k, s]) => `<option value="${k}">${s.icon} ${s.label}</option>`).join('');
+}
+
+function openForm(p) {
+  form.reset();
+  $('#dlgTitle').textContent = p ? 'Editar rastreio' : 'Novo rastreio';
+  form.pid.value = p?.id || '';
+  form.code.value = p?.code || '';
+  form.name.value = p?.name || '';
+  form.store.value = p?.store || '';
+  form.carrier.value = p?.carrier || '';
+  form.status.value = p?.status || 'transito';
+  form.eta.value = p?.eta || '';
+  form.notes.value = p?.notes || '';
+  updateHint();
+  // Editando: o nome vem primeiro (o código já está certo). Novo: o código primeiro (é o que se cola).
+  const [primeiro, segundo] = p ? [$('#campoNome'), $('#campoCodigo')] : [$('#campoCodigo'), $('#campoNome')];
+  $('#dlgTitle').after(primeiro);
+  primeiro.after(segundo);
+  dlg.showModal();
+  (p ? form.name : form.code).focus();
+}
+
+function updateHint() {
+  const code = normalizeCode(form.code.value);
+  const key = detectCarrier(code);
+  $('#carrierHint').textContent = key ? `Detectado: ${CARRIERS[key].name}` : '';
+}
+
+form.code.addEventListener('input', updateHint);
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const code = normalizeCode(form.code.value);
+  if (!code) return;
+  const id = form.pid.value;
+  const dup = visibleItems().find((p) => p.code === code && p.id !== id);
+  if (dup && !confirm(`Esse código já está cadastrado (${dup.name || 'sem nome'}). Salvar mesmo assim?`)) return;
+
+  const data = {
+    code,
+    name: form.name.value.trim(),
+    store: form.store.value.trim(),
+    carrier: form.carrier.value || detectCarrier(code),
+    status: form.status.value,
+    eta: form.eta.value,
+    notes: form.notes.value.trim(),
+    updatedAt: Date.now(),
+  };
+
+  let novo = null;
+  if (id) {
+    Object.assign(state.items.find((p) => p.id === id), data);
+    toast('Rastreio atualizado');
+  } else {
+    novo = { id: uid(), createdAt: Date.now(), ...data };
+    state.items.push(novo);
+    toast('Rastreio adicionado');
+  }
+  dlg.close();
+  save();
+  if (novo) showTracking(novo); // já mostra o resultado do rastreio recém-cadastrado
+});
+
+// ---------- Resultado do rastreio ----------
+// Transportadoras com consulta própria (trackers.js) mostram a linha do tempo aqui e atualizam o status.
+// As demais usam o widget oficial do 17TRACK.
+const dlgTrack = $('#dlgTrack');
+let widgetScript;
+
+async function refreshItem(p) {
+  const result = await Trackers.fetch(p);
+  const last = result.events[0];
+  if (p.status !== result.status && STATUS[result.status]) {
+    adicionarNotificacao('status', `${p.name || p.code}: ${STATUS[result.status].icon} ${STATUS[result.status].label}`);
+  }
+  p.status = result.status;
+  p.lastEvent = last ? { text: last.text, time: last.time } : null;
+  p.lastCheck = Date.now();
+  p.updatedAt = Date.now();
+  save();
+  return result;
+}
+
+// Atualiza em segundo plano os pacotes a caminho (no máximo a cada 30 min por pacote)
+async function refreshAll() {
+  const due = visibleItems().filter(
+    (p) => Trackers.supports(p.carrier) && p.status !== 'entregue' && Date.now() - (p.lastCheck || 0) > 30 * 60000
+  );
+  for (const p of due) {
+    try { await refreshItem(p); } catch { /* tenta de novo na próxima vez */ }
+  }
+}
+
+function timelineHtml(events) {
+  if (!events.length) return '<p class="empty">Ainda não há movimentações.</p>';
+  return `<ol class="timeline">${events.map((ev) => `
+    <li>
+      <p class="tl-text">${esc(ev.text)}</p>
+      <p class="tl-meta">${fmtDateTime(ev.time)}${ev.location ? ` · ${esc(ev.location)}` : ''}</p>
+    </li>`).join('')}</ol>`;
+}
+
+function loadWidget() {
+  widgetScript ??= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://www.17track.net/externalcall.js';
+    s.onload = resolve;
+    s.onerror = () => { widgetScript = null; reject(new Error('sem conexão com o 17TRACK')); };
+    document.head.appendChild(s);
+  });
+  return widgetScript;
+}
+
+async function showTracking(p) {
+  const carrier = CARRIERS[p.carrier] || CARRIERS.outra;
+  $('#trackTitle').textContent = p.name || 'Rastreio';
+  $('#trackCode').textContent = `${p.code} · ${carrier.name}`;
+  $('#trackOfficial').href = carrier.url(p.code);
+  const box = $('#trackResult');
+  box.innerHTML = '<p class="empty">Buscando rastreio…</p>';
+  box.classList.remove('widget');
+  dlgTrack.showModal();
+
+  if (Trackers.supports(p.carrier)) {
+    try {
+      const result = await refreshItem(p);
+      box.innerHTML = timelineHtml(result.events);
+    } catch (err) {
+      box.innerHTML = `<p class="empty">Não foi possível consultar (${esc(err.message)}).<br>
+        Use o botão “Site da transportadora”.</p>`;
+    }
+    return;
+  }
+
+  // Shopee sem proxy: o 17TRACK não rastreia a SPX Brasil — mostra o que a busca automática trouxe
+  if (p.carrier === 'shopee') {
+    box.innerHTML = `
+      <p class="track-note">Consulta completa da Shopee indisponível aqui (falta o proxy em ⚙️). Último evento trazido pela busca de pedidos:</p>
+      ${timelineHtml(p.lastEvent ? [p.lastEvent] : [])}`;
+    return;
+  }
+
+  // Histórico trazido pela importação da loja (ex.: AliExpress), com opção de consultar no 17TRACK
+  if (p.events?.length) {
+    box.innerHTML = `
+      <p class="track-note">
+        Histórico da importação do ${esc(p.store || 'pedido')} em ${fmtDateTime(p.eventsAt || p.updatedAt)}.
+        Importe de novo para atualizar.
+        <button type="button" class="btn small" id="btnWidget">Consultar no 17TRACK</button>
+      </p>
+      ${timelineHtml(p.events)}`;
+    $('#btnWidget').addEventListener('click', () => showWidget(p, carrier));
+    return;
+  }
+  showWidget(p, carrier);
+}
+
+async function showWidget(p, carrier) {
+  const box = $('#trackResult');
+  box.innerHTML = '<p class="empty">Buscando rastreio…</p>';
+  try {
+    await loadWidget();
+    box.innerHTML = '';
+    box.classList.add('widget');
+    YQV5.trackSingle({
+      YQ_ContainerId: 'trackResult',
+      YQ_Height: Math.max(360, box.clientHeight),
+      YQ_Fc: carrier.yq || '0', // '0' = o 17TRACK tenta descobrir a transportadora
+      YQ_Lang: 'pt',
+      YQ_Num: p.code,
+    });
+  } catch (err) {
+    box.innerHTML = `<p class="empty">Não foi possível carregar o rastreio (${esc(err.message)}).<br>
+      Use o botão “Site da transportadora”.</p>`;
+  }
+}
+
+// ---------- Ações nos cards ----------
+$('#list').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn || btn.dataset.action === 'status') return;
+  const p = state.items.find((x) => x.id === btn.closest('.card').dataset.id);
+
+  switch (btn.dataset.action) {
+    case 'copy':
+      try { await navigator.clipboard.writeText(p.code); toast('Código copiado'); }
+      catch { prompt('Copie o código:', p.code); }
+      break;
+    case 'track':
+      showTracking(p);
+      break;
+    case 'edit':
+      openForm(p);
+      break;
+    case 'delete':
+      if (confirm(`Excluir "${p.name || p.code}"?`)) {
+        // Mantém só o necessário para a exclusão se propagar na sincronização
+        Object.keys(p).forEach((k) => { if (!['id', 'createdAt'].includes(k)) delete p[k]; });
+        Object.assign(p, { deleted: true, updatedAt: Date.now() });
+        save();
+        toast('Rastreio excluído');
+      }
+      break;
+  }
+});
+
+$('#list').addEventListener('change', (e) => {
+  if (e.target.dataset.action !== 'status') return;
+  const p = state.items.find((x) => x.id === e.target.closest('.card').dataset.id);
+  p.status = e.target.value;
+  p.updatedAt = Date.now();
+  save();
+});
+
+// ---------- Busca e filtros ----------
+$('#search').addEventListener('input', (e) => { state.query = e.target.value.trim(); render(); });
+$('#filters').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  document.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === chip));
+  state.filter = chip.dataset.filter;
+  render();
+});
+
+// ---------- Diálogos ----------
+document.querySelectorAll('dialog').forEach((d) => {
+  d.addEventListener('click', (e) => {
+    if (e.target === d || e.target.closest('[data-close]')) d.close();
+  });
+});
+$('#btnAdd').addEventListener('click', () => openForm());
+
+// Colar um código direto na página (Ctrl+V fora de campos) já abre o formulário
+document.addEventListener('paste', (e) => {
+  if (document.querySelector('dialog[open]') || e.target.closest('input, textarea')) return;
+  const text = normalizeCode(e.clipboardData.getData('text'));
+  if (/^[A-Z0-9]{8,30}$/.test(text)) {
+    openForm();
+    form.code.value = text;
+    updateHint();
+    form.name.focus();
+  }
+});
+
+// ---------- Configurações / sincronização ----------
+const dlgSettings = $('#dlgSettings');
+const formSettings = $('#formSettings');
+
+$('#btnSettings').addEventListener('click', () => {
+  const cfg = Sync.config();
+  formSettings.token.value = cfg.token || '';
+  formSettings.gistId.value = cfg.gistId || '';
+  formSettings.proxy.value = localStorage.getItem('rastreazera:proxy') || '';
+  carregarLojasBusca();
+  dlgSettings.showModal();
+});
+
+// ---------- Onde buscar pedidos (guardado no server.py: vale também para a extensão Coletor) ----------
+const caixasLojas = () => [...document.querySelectorAll('#lojasBusca input[name=loja]')];
+
+async function carregarLojasBusca() {
+  const aviso = $('#lojasBuscaAviso');
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    if (!res.ok) throw new Error();
+    const { lojas } = await res.json();
+    caixasLojas().forEach((c) => { c.checked = lojas[c.value] !== false; });
+    $('#lojasBusca').classList.remove('desabilitado');
+    aviso.hidden = true;
+  } catch {
+    $('#lojasBusca').classList.add('desabilitado');
+    aviso.textContent = 'Disponível com o server.py rodando.';
+    aviso.hidden = false;
+  }
+}
+
+$('#lojasBusca').addEventListener('change', async (e) => {
+  const caixa = e.target;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lojas: { [caixa.value]: caixa.checked } }),
+    });
+    if (!res.ok) throw new Error();
+    const nome = FONTES[caixa.value];
+    toast(caixa.checked ? `${nome} incluída nas buscas` : `${nome} fora das buscas`);
+  } catch {
+    caixa.checked = !caixa.checked;
+    toast('Não foi possível salvar — o server.py está rodando?');
+  }
+});
+
+$('#btnProxySave').addEventListener('click', () => {
+  Trackers.setProxyUrl(formSettings.proxy.value);
+  toast(formSettings.proxy.value ? 'Proxy salvo' : 'Proxy removido');
+  refreshAll();
+});
+
+$('#btnSyncSave').addEventListener('click', async () => {
+  const token = formSettings.token.value.trim();
+  let gistId = formSettings.gistId.value.trim();
+  if (!token) return toast('Informe o token do GitHub');
+  try {
+    setSyncStatus('busy');
+    if (!gistId) {
+      gistId = await Sync.create(token, state.items);
+      formSettings.gistId.value = gistId;
+    }
+    Sync.setConfig({ token, gistId });
+    await syncNow();
+    await enviarGistAoServidor();
+    toast('Sincronização ativada');
+  } catch (err) {
+    setSyncStatus('error');
+    toast(`Falha: ${err.message}`);
+  }
+});
+
+$('#btnSyncOff').addEventListener('click', () => {
+  Sync.setConfig(null);
+  enviarGistAoServidor(null);
+  formSettings.token.value = '';
+  formSettings.gistId.value = '';
+  setSyncStatus('off');
+  toast('Sincronização desligada');
+});
+
+let syncTimer;
+function scheduleSync() {
+  if (!Sync.enabled()) return;
+  clearTimeout(syncTimer);
+  setSyncStatus('pending');
+  syncTimer = setTimeout(syncNow, 1500);
+}
+
+async function syncNow() {
+  if (!Sync.enabled()) return setSyncStatus('off');
+  try {
+    setSyncStatus('busy');
+    const remoto = await Sync.pull();
+    state.items = Sync.merge(state.items, remoto.items);
+    save({ sync: false });
+    // Busca concluída no PC: o server.py publica no Gist, então chega também ao celular
+    importarUltimaBusca(remoto.busca);
+    acompanharPedidoRemoto(remoto.busca);
+    await Sync.push(state.items);
+    setSyncStatus('ok');
+  } catch (err) {
+    setSyncStatus('error', err.message);
+  }
+}
+
+// Com a tela aberta, sincroniza a cada 2 min (30 s enquanto espera uma busca pedida pelo celular)
+setInterval(() => { if (!document.hidden && !lerJSON(PEDIDO_REMOTO_KEY, 0)) syncNow(); }, 120000);
+setInterval(() => { if (!document.hidden && lerJSON(PEDIDO_REMOTO_KEY, 0)) syncNow(); }, 30000);
+
+// O server.py (no PC) usa o mesmo Gist para publicar as buscas e receber pedidos do celular
+async function enviarGistAoServidor(gist = Sync.enabled() ? Sync.config() : null) {
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gist: gist && { token: gist.token, gistId: gist.gistId } }),
+    });
+  } catch { /* sem server.py (site publicado) */ }
+}
+
+// ---------- Configurar o celular por QR code ----------
+// O QR abre o site público com #config=<token e Gist>. O fragmento (#) não é enviado a nenhum servidor
+// e é apagado do endereço assim que lido.
+let qrScript;
+
+function base64url(texto) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(texto))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function deBase64url(b64) {
+  const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
+
+$('#btnQrCelular').addEventListener('click', async () => {
+  const caixa = $('#qrCelular');
+  if (!caixa.hidden) { caixa.hidden = true; $('#qrCodigo').innerHTML = ''; return; }
+  if (!Sync.enabled()) return toast('Ative a sincronização (token do GitHub) primeiro');
+  if (!RZ_CONFIG.sitePublico) return toast('O site ainda não foi publicado (config.js → sitePublico)');
+  const { token, gistId } = Sync.config();
+  const url = `${RZ_CONFIG.sitePublico}#config=${base64url(JSON.stringify({ token, gistId }))}`;
+  try {
+    qrScript ??= new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+      s.onload = resolve;
+      s.onerror = () => { qrScript = null; reject(new Error('sem conexão')); };
+      document.head.appendChild(s);
+    });
+    await qrScript;
+  } catch {
+    return toast('Não foi possível carregar o gerador de QR code');
+  }
+  $('#qrCodigo').innerHTML = '';
+  new QRCode($('#qrCodigo'), { text: url, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.L });
+  caixa.hidden = false;
+});
+$('#dlgSettings').addEventListener('close', () => { $('#qrCelular').hidden = true; $('#qrCodigo').innerHTML = ''; });
+
+function importarConfigDoHash() {
+  const match = location.hash.match(/^#config=([\w-]+)$/);
+  if (!match) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const { token, gistId } = JSON.parse(deBase64url(match[1]));
+    if (!token || !gistId) throw new Error();
+    Sync.setConfig({ token, gistId });
+    toast('Celular configurado — sincronizando…');
+  } catch {
+    toast('Link de configuração inválido');
+  }
+}
+
+// ---------- Busca pedida pelo celular (sem server.py): o PC recebe pelo Gist ----------
+const PEDIDO_REMOTO_KEY = 'rastreazera:pedidoRemoto';
+const PEDIDO_REMOTO_MAX_MS = 20 * 60000;
+
+async function pedirBuscaRemota() {
+  if (!Sync.enabled()) return toast('Para buscar pelo celular, configure a sincronização em ⚙️ (QR code no PC)');
+  try {
+    await Sync.pedirBusca();
+  } catch (err) {
+    return toast(`Não foi possível pedir a busca: ${err.message}`);
+  }
+  gravarJSON(PEDIDO_REMOTO_KEY, Date.now());
+  toast('Busca pedida ao PC');
+  acompanharPedidoRemoto(null);
+}
+
+function acompanharPedidoRemoto(buscaRemota) {
+  const pedidoEm = Number(lerJSON(PEDIDO_REMOTO_KEY, 0)) || 0;
+  if (!pedidoEm) return;
+  const el = $('#olxStatus');
+  if (buscaRemota?.fimEm > pedidoEm) {
+    gravarJSON(PEDIDO_REMOTO_KEY, null); // chegou (importarUltimaBusca já notificou)
+    el.hidden = true;
+  } else if (Date.now() - pedidoEm > PEDIDO_REMOTO_MAX_MS) {
+    gravarJSON(PEDIDO_REMOTO_KEY, null);
+    el.hidden = true;
+    adicionarNotificacao('busca', 'O PC não respondeu ao pedido de busca (ele precisa estar ligado, com o Chrome aberto). A busca roda quando ele ligar.');
+  } else {
+    el.textContent = 'Busca pedida ao PC — o resultado chega aqui quando terminar (o PC precisa estar ligado)…';
+    el.hidden = false;
+  }
+}
+
+function setSyncStatus(kind, detail = '') {
+  const el = $('#syncStatus');
+  const map = {
+    off: ['', ''],
+    pending: ['●', 'Alterações aguardando envio'],
+    busy: ['⟳', 'Sincronizando…'],
+    ok: ['☁️', 'Sincronizado'],
+    error: ['⚠️', `Erro na sincronização${detail ? ': ' + detail : ''}`],
+  };
+  const [icon, title] = map[kind];
+  el.textContent = icon;
+  el.title = title;
+  el.dataset.kind = kind;
+}
+$('#syncStatus').addEventListener('click', syncNow);
+
+// ---------- Backup ----------
+$('#btnExport').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state.items, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `rastreazera-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$('#fileImport').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!Array.isArray(data)) throw new Error('formato inválido');
+    state.items = Sync.merge(state.items, data.filter((p) => p && p.id && (p.code || p.deleted)));
+    save();
+    toast(`Importado: ${data.length} item(ns)`);
+  } catch (err) {
+    toast(`Não foi possível importar: ${err.message}`);
+  }
+  e.target.value = '';
+});
+
+// ---------- Importação de pedidos (Shopee / AliExpress) ----------
+// O coletor (coletor/coletores.js) roda dentro do site da loja e abre o Rastreazera com os pedidos em
+// #importar=<json>. O fragmento (#) nunca é enviado a nenhum servidor.
+// Reimportar também ATUALIZA os pacotes já cadastrados (último evento, histórico, status, previsão).
+const FONTES = { shopee: 'Shopee', aliexpress: 'AliExpress', olx: 'OLX' };
+
+function cleanEvent(ev) {
+  if (!ev?.text || !Number(ev.time)) return null;
+  return { text: String(ev.text).slice(0, 300), time: Number(ev.time), ...(ev.location ? { location: String(ev.location).slice(0, 120) } : {}) };
+}
+
+function importFromHash() {
+  const match = location.hash.match(/^#importar=(.+)$/);
+  if (!match) return;
+  history.replaceState(null, '', location.pathname + location.search);
+
+  let payload;
+  try { payload = JSON.parse(decodeURIComponent(match[1])); } catch { return toast('Dados de importação inválidos'); }
+  importarDados(payload);
+}
+
+// Cadastra/atualiza pedidos vindos de uma loja: { fonte, pedidos: [{ orderId, code, name, shop, account?,
+// status, lastEvent?, events?, eta?, carrierName?, onlyUpdate? }] }. onlyUpdate: não cria, só atualiza.
+function importarDados(payload) {
+  if (!Array.isArray(payload?.pedidos)) return;
+  const fonte = FONTES[payload.fonte] ? payload.fonte : 'shopee';
+
+  let novos = 0, atualizados = 0, semCodigo = 0;
+  for (const ped of payload.pedidos) {
+    const code = normalizeCode(ped.code);
+    if (!code) { if (!ped.onlyUpdate) semCodigo++; continue; }
+    const ref = ped.orderId ? `${fonte}:${ped.orderId}` : '';
+    const lastEvent = cleanEvent(ped.lastEvent);
+    const events = Array.isArray(ped.events) ? ped.events.map(cleanEvent).filter(Boolean).slice(0, 60) : null;
+    const eta = /^\d{4}-\d{2}-\d{2}$/.test(ped.eta || '') ? ped.eta : '';
+
+    const existe = visibleItems().find((p) =>
+      p.code === code || (ref && p.orderRef === ref) || (fonte === 'shopee' && ped.orderId && p.shopeeOrderId === ped.orderId));
+    if (existe) {
+      let mudou = false; // só mudanças que o usuário enxerga contam como "atualizado"
+      if (ref && !existe.orderRef) { existe.orderRef = ref; existe.updatedAt = Date.now(); }
+      if (eta && existe.eta !== eta) { existe.eta = eta; mudou = true; }
+      if (lastEvent && lastEvent.time > (existe.lastEvent?.time || 0)) {
+        existe.lastEvent = lastEvent;
+        if (events?.length) { existe.events = events; existe.eventsAt = Date.now(); }
+        if (STATUS[ped.status] && existe.status !== 'entregue') existe.status = ped.status;
+        mudou = true;
+      }
+      // Lojas sem histórico de eventos (ex.: OLX) só informam que o pedido foi entregue
+      if (ped.status === 'entregue' && existe.status !== 'entregue') { existe.status = 'entregue'; mudou = true; }
+      if (mudou) { existe.updatedAt = Date.now(); atualizados++; }
+      continue;
+    }
+    if (ped.onlyUpdate) continue;
+
+    state.items.push({
+      id: uid(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      code,
+      name: String(ped.name || '').slice(0, 120),
+      store: FONTES[fonte],
+      carrier: detectCarrier(code),
+      status: STATUS[ped.status] ? ped.status : 'transito',
+      eta,
+      notes: [
+        ped.shop && `Loja: ${String(ped.shop).slice(0, 80)}`,
+        ped.account && `Conta: ${String(ped.account).slice(0, 60)}`,
+        ped.carrierName && `Envio: ${String(ped.carrierName).slice(0, 60)}`,
+      ]
+        .filter(Boolean).join(' · '),
+      orderRef: ref,
+      lastEvent,
+      ...(events?.length ? { events, eventsAt: Date.now() } : {}),
+    });
+    novos++;
+  }
+  save();
+  const stats = {
+    fonte,
+    total: payload.pedidos.filter((p) => !p.onlyUpdate).length, // pedidos ativos encontrados na loja
+    novos,
+    atualizados,
+    semCodigo,
+    parado: Boolean(payload.parado),
+  };
+  registrarResultadoBusca(stats);
+  return stats;
+}
+
+// ---------- Buscas e notificações (sininho) ----------
+// Uma "busca" junta o resultado de várias lojas (ex.: o agente /importar-pedidos busca Shopee, AliExpress
+// e OLX) e, quando todas terminam, gera UMA notificação: "3 pedidos Shopee (1 novo) · 2 pedidos ...".
+// Importações avulsas (favorito, botão só da OLX) viram uma notificação só daquela loja.
+const BUSCA_KEY = 'rastreazera:busca';
+const NOTIF_KEY = 'rastreazera:notificacoes';
+const BUSCA_MAX_MS = 45 * 60000; // busca que não terminou nesse tempo é fechada com o que tiver
+const ORDEM_FONTES = ['shopee', 'aliexpress', 'olx'];
+
+function lerJSON(key, padrao) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? padrao; } catch { return padrao; }
+}
+function gravarJSON(key, valor) {
+  try {
+    if (valor == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(valor));
+  } catch { /* sem storage */ }
+}
+
+function buscaAtiva() {
+  const b = lerJSON(BUSCA_KEY, null);
+  if (b && Date.now() - b.inicio > BUSCA_MAX_MS) { finalizarBusca(); return null; }
+  return b;
+}
+
+// fontes: lojas que esta busca vai consultar. Se já houver uma busca em andamento, soma a ela.
+function iniciarBusca(fontes) {
+  const b = buscaAtiva() || { inicio: Date.now(), esperadas: [], resultados: {} };
+  b.esperadas = [...new Set([...b.esperadas, ...fontes])];
+  gravarJSON(BUSCA_KEY, b);
+}
+
+function registrarResultadoBusca(stats) {
+  const b = buscaAtiva();
+  if (!b) {
+    notificarBusca({ [stats.fonte]: stats });
+    return;
+  }
+  b.resultados[stats.fonte] = stats;
+  if (!b.esperadas.includes(stats.fonte)) b.esperadas.push(stats.fonte);
+  gravarJSON(BUSCA_KEY, b);
+  if (b.esperadas.every((f) => b.resultados[f])) finalizarBusca();
+  else toast(`${textoFonte(stats)} — aguardando ${b.esperadas.filter((f) => !b.resultados[f]).map((f) => FONTES[f]).join(', ')}`);
+}
+
+function registrarFalhaBusca(fonte, motivo) {
+  registrarResultadoBusca({ fonte, erro: motivo });
+}
+
+function finalizarBusca() {
+  const b = lerJSON(BUSCA_KEY, null);
+  gravarJSON(BUSCA_KEY, null);
+  if (!b) return;
+  for (const f of b.esperadas) b.resultados[f] ??= { fonte: f, erro: 'não terminou' };
+  if (Object.keys(b.resultados).length) notificarBusca(b.resultados);
+}
+
+function plural(n, singular, pluralTxt) {
+  return `${n} ${n === 1 ? singular : pluralTxt}`;
+}
+
+function textoFonte(s) {
+  const loja = FONTES[s.fonte] || s.fonte;
+  if (s.erro) return `${loja}: ${s.erro}`;
+  const detalhes = [
+    s.novos && plural(s.novos, 'novo', 'novos'),
+    s.atualizados && plural(s.atualizados, 'atualizado', 'atualizados'),
+  ].filter(Boolean);
+  if (!detalhes.length) detalhes.push('sem novidades');
+  if (s.semCodigo) detalhes.push(`${s.semCodigo} sem código`);
+  if (s.parado) detalhes.push('verificação interrompida');
+  return `${plural(s.total, 'pedido', 'pedidos')} ${loja} (${detalhes.join(', ')})`;
+}
+
+function notificarBusca(resultados) {
+  const texto = Object.values(resultados)
+    .sort((a, b) => ORDEM_FONTES.indexOf(a.fonte) - ORDEM_FONTES.indexOf(b.fonte))
+    .map(textoFonte)
+    .join(' · ');
+  adicionarNotificacao('busca', texto);
+  toast(texto);
+}
+
+function adicionarNotificacao(tipo, texto) {
+  const lista = lerJSON(NOTIF_KEY, []);
+  lista.unshift({ id: uid(), ts: Date.now(), tipo, texto, lida: false });
+  gravarJSON(NOTIF_KEY, lista.slice(0, 100));
+  renderNotificacoes();
+}
+
+const NOTIF_ICONE = { busca: '🔎', status: '📦' };
+
+function renderNotificacoes() {
+  const lista = lerJSON(NOTIF_KEY, []);
+  const naoLidas = lista.filter((n) => !n.lida).length;
+  const badge = $('#notifBadge');
+  badge.textContent = naoLidas > 9 ? '9+' : naoLidas;
+  badge.hidden = !naoLidas;
+  $('#btnNotif').title = naoLidas ? `${naoLidas} notificação(ões) nova(s)` : 'Notificações';
+  $('#notifList').innerHTML = lista.length
+    ? lista.map((n) => `
+        <li class="${n.lida ? '' : 'nova'}">
+          <span class="notif-icone">${NOTIF_ICONE[n.tipo] || '🔔'}</span>
+          <div><p>${esc(n.texto)}</p><time>${fmtDateTime(n.ts)}</time></div>
+        </li>`).join('')
+    : '<li class="vazia">Nenhuma notificação.</li>';
+}
+
+function marcarNotificacoesLidas() {
+  const lista = lerJSON(NOTIF_KEY, []);
+  if (!lista.some((n) => !n.lida)) return;
+  gravarJSON(NOTIF_KEY, lista.map((n) => ({ ...n, lida: true })));
+}
+
+$('#btnNotif').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const painel = $('#notifPanel');
+  if (!painel.hidden) { painel.hidden = true; renderNotificacoes(); return; }
+  renderNotificacoes(); // mostra as novas destacadas…
+  painel.hidden = false;
+  marcarNotificacoesLidas(); // …e já conta como lidas (o destaque some ao fechar)
+  $('#notifBadge').hidden = true;
+});
+$('#btnNotifLimpar').addEventListener('click', (e) => {
+  e.stopPropagation();
+  gravarJSON(NOTIF_KEY, []);
+  renderNotificacoes();
+});
+document.addEventListener('click', (e) => {
+  const painel = $('#notifPanel');
+  if (!painel.hidden && !e.target.closest('#notifPanel')) { painel.hidden = true; renderNotificacoes(); }
+});
+
+// Usado pelo agente /importar-pedidos para agrupar as lojas numa busca só
+window.Rastreazera = { iniciarBusca, registrarFalhaBusca, finalizarBusca };
+
+// ---------- Busca automática (extensão Rastreazera Coletor + OLX Dashboard, via server.py) ----------
+// A extensão Rastreazera Coletor (pasta coletor/, no Chrome) busca Shopee e AliExpress a cada 1 hora e
+// o server.py pede a Verificação Completa da OLX; quando todas as lojas respondem, a busca fica em
+// /api/busca/estado → "ultima" e é importada aqui (uma notificação no 🔔). Buscas que terminaram com o
+// site fechado são importadas ao abrir. O botão "Buscar pedidos" pede uma busca na hora.
+const BUSCA_API = '/api/busca';
+const BUSCA_VISTA_KEY = 'rastreazera:buscaVista';
+const CHECAR_BUSCA_MS = 60000; // sem busca em andamento
+const CHECAR_BUSCA_RAPIDO_MS = 4000; // durante uma busca
+let buscaTimer = null;
+let buscaSolicitadaEm = 0;
+let servidorConfigurado = false; // já conferiu se o server.py sabe qual é o Gist
+
+function olxStatus(pedido) {
+  return { transito: 'transito', preparacao: 'aguardando', entregue: 'entregue', cancelamento: 'problema' }[pedido.statusTipo] || 'transito';
+}
+
+function olxParaImportacao(resultado) {
+  return {
+    fonte: 'olx',
+    parado: resultado.parado,
+    pedidos: (resultado.pedidos || [])
+      .filter((p) => p.statusTipo !== 'cancelamento')
+      .map((p) => ({
+        orderId: String(p.link || '').split('/').pop() || '',
+        code: p.codigoRastreio || '',
+        name: p.titulo || 'Pedido OLX',
+        account: p.conta || '',
+        status: olxStatus(p),
+        // Entregues só atualizam pacotes que já estão aqui — não enchem a lista de pedidos antigos
+        onlyUpdate: p.statusTipo === 'entregue',
+      })),
+  };
+}
+
+// Importa a última busca concluída, se ainda não foi importada neste navegador
+function importarUltimaBusca(ultima) {
+  if (!ultima?.fimEm || ultima.fimEm <= (Number(lerJSON(BUSCA_VISTA_KEY, 0)) || 0)) return;
+  gravarJSON(BUSCA_VISTA_KEY, ultima.fimEm);
+  const lojas = ORDEM_FONTES.filter((f) => ultima.esperadas.includes(f));
+  if (!lojas.length) return; // todas as lojas foram desmarcadas durante a busca
+  iniciarBusca(lojas); // agrupa as lojas numa notificação só
+  for (const loja of lojas) {
+    const r = ultima.fontes[loja] || { erro: 'sem resposta' };
+    if (r.erro) registrarFalhaBusca(loja, r.erro);
+    else if (loja === 'olx') importarDados(olxParaImportacao(r));
+    else importarDados({ fonte: loja, pedidos: r.pedidos });
+  }
+  refreshAll();
+}
+
+function mostrarProgressoBusca(estado) {
+  const el = $('#olxStatus');
+  const atual = estado?.atual;
+  if (atual) {
+    const icone = (loja) => {
+      const r = atual.fontes[loja];
+      return r ? (r.erro ? '❌' : '✅') : '🔄';
+    };
+    const lojas = atual.esperadas.map((l) => `${FONTES[l]} ${icone(l)}`).join(' · ');
+    const contas = estado.olxProgresso?.contas;
+    const sufixo = !atual.fontes.olx && contas?.length
+      ? ` (${contas.map((c) => `${c.nome} ${{ ok: '✅', verificando: '🔄', erro: '❌' }[c.status] || '⏳'}`).join(' ')})`
+      : '';
+    el.textContent = `Buscando pedidos: ${lojas}${sufixo}`;
+  } else if (estado?.solicitadoEm) {
+    el.textContent = 'Busca solicitada — aguardando a extensão Rastreazera Coletor no Chrome…';
+  } else {
+    el.textContent = '';
+  }
+  el.hidden = !el.textContent;
+  $('#btnBuscar').disabled = Boolean(atual || estado?.solicitadoEm);
+}
+
+async function checarBusca() {
+  clearTimeout(buscaTimer);
+  let estado = null;
+  try {
+    const res = await fetch(`${BUSCA_API}/estado`, { cache: 'no-store' });
+    if (res.ok) estado = await res.json();
+  } catch { /* sem server.py (ex.: site publicado sem proxy local) */ }
+  if (!estado) {
+    $('#btnBuscar').disabled = false;
+    return;
+  }
+  if (!servidorConfigurado) {
+    servidorConfigurado = true;
+    const cfg = await fetch('/api/config', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+    if (cfg && !cfg.gistConfigurado && Sync.enabled()) enviarGistAoServidor();
+  }
+  mostrarProgressoBusca(estado);
+  importarUltimaBusca(estado.ultima);
+
+  // O Coletor confere pedidos a cada 1 min: sem resposta em 2,5 min, ele não está rodando
+  if (buscaSolicitadaEm && estado.solicitadoEm && Date.now() - buscaSolicitadaEm > 150000) {
+    buscaSolicitadaEm = 0;
+    adicionarNotificacao('busca', 'Busca não começou: abra o Chrome com a extensão Rastreazera Coletor (a busca fica pendente e roda quando ela abrir)');
+    toast('A extensão Rastreazera Coletor não respondeu');
+  }
+  if (!estado.atual && !estado.solicitadoEm) buscaSolicitadaEm = 0;
+  const emAndamento = estado.atual || estado.solicitadoEm;
+  buscaTimer = setTimeout(checarBusca, emAndamento ? CHECAR_BUSCA_RAPIDO_MS : CHECAR_BUSCA_MS);
+}
+
+async function buscarAgora() {
+  let lojas = null;
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    if (res.ok) lojas = (await res.json()).lojas;
+  } catch { /* sem server.py */ }
+  // Sem server.py (celular, site publicado): o pedido vai ao PC pelo Gist
+  if (!lojas) return pedirBuscaRemota();
+  if (!Object.values(lojas).some(Boolean)) return toast('Nenhum local marcado em ⚙️ → Onde buscar pedidos');
+  try {
+    const res = await fetch(`${BUSCA_API}/solicitar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (!res.ok) throw new Error();
+  } catch {
+    return toast('A busca de pedidos só funciona com o server.py rodando');
+  }
+  buscaSolicitadaEm = Date.now();
+  toast('Busca de pedidos solicitada');
+  checarBusca();
+}
+
+$('#btnBuscar').addEventListener('click', buscarAgora);
+
+// Gera o favorito "Importar pedidos" (Shopee e AliExpress) apontando para este Rastreazera
+async function buildBookmarklet() {
+  const link = $('#bookmarklet');
+  try {
+    const src = await (await fetch('coletor/coletores.js')).text();
+    const target = location.origin + location.pathname;
+    const runner = `
+      const w = window.open('about:blank', '_blank');
+      try {
+        const dados = await coletarPedidos();
+        const url = ${JSON.stringify(target)} + '#importar=' + encodeURIComponent(JSON.stringify(dados));
+        if (w) w.location.href = url; else location.href = url;
+      } catch (e) { if (w) w.close(); alert('Rastreazera: ' + e.message); }`;
+    link.href = 'javascript:' + encodeURIComponent(`(async()=>{${src}\n${runner}})()`);
+  } catch {
+    link.removeAttribute('href');
+  }
+}
+
+// ---------- Utilidades ----------
+let toastTimer;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ---------- Inicialização ----------
+fillSelects();
+render();
+renderNotificacoes();
+importarConfigDoHash();
+importFromHash();
+buildBookmarklet();
+window.addEventListener('hashchange', () => { importFromHash(); refreshAll(); });
+syncNow().then(refreshAll);
+// Buscas automáticas que terminaram enquanto o site estava fechado + acompanhamento (só com o server.py)
+checarBusca();
+// Ao voltar para a aba (ex.: no celular), puxa as novidades do outro aparelho e das transportadoras
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { syncNow().then(refreshAll); checarBusca(); } });
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}

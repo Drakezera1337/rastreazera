@@ -1,0 +1,206 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Rastreazera</title>
+  <meta name="description" content="Todos os seus rastreios (Correios, Shopee, AliExpress...) em um só lugar.">
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icon.svg" alt="" width="32" height="32">
+      <h1>Rastreazera</h1>
+    </div>
+    <div class="topbar-actions">
+      <span id="syncStatus" class="sync-status" title="Status da sincronização"></span>
+      <button id="btnBuscar" class="btn small" title="Busca agora os pedidos da Shopee, AliExpress e OLX (automático a cada 1 hora)">🔄<span class="lbl"> Buscar pedidos</span></button>
+      <div class="notif-wrap">
+        <button id="btnNotif" class="icon-btn" aria-label="Notificações" title="Notificações">🔔<span id="notifBadge" class="notif-badge" hidden></span></button>
+        <div id="notifPanel" class="notif-panel" hidden>
+          <div class="notif-head">
+            <strong>Notificações</strong>
+            <button type="button" id="btnNotifLimpar" class="btn small ghost">Limpar</button>
+          </div>
+          <ol id="notifList" class="notif-list"></ol>
+        </div>
+      </div>
+      <button id="btnSettings" class="icon-btn" title="Configurações" aria-label="Configurações">⚙️</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="toolbar">
+      <input id="search" type="search" placeholder="Buscar por nome, código ou loja…" autocomplete="off">
+      <div id="filters" class="chips" role="tablist">
+        <button class="chip active" data-filter="ativos">Ativos</button>
+        <button class="chip" data-filter="todos">Todos</button>
+        <button class="chip" data-filter="entregue">Entregues</button>
+        <button class="chip" data-filter="problema">Com problema</button>
+      </div>
+    </section>
+
+    <p id="olxStatus" class="olx-status" hidden></p>
+    <section id="stats" class="stats"></section>
+    <section id="list" class="list" aria-live="polite"></section>
+  </main>
+
+  <button id="btnAdd" class="fab" aria-label="Adicionar rastreio">＋</button>
+
+  <!-- Adicionar / editar -->
+  <dialog id="dlgPacote">
+    <form id="formPacote" method="dialog">
+      <h2 id="dlgTitle">Novo rastreio</h2>
+      <input type="hidden" name="pid">
+
+      <div id="campoCodigo" class="campo">
+        <label>Código de rastreio
+          <input name="code" required autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ex: NL123456789BR">
+        </label>
+        <p id="carrierHint" class="hint"></p>
+      </div>
+
+      <label id="campoNome">Nome do produto
+        <input name="name" placeholder="Ex: Fone bluetooth" autocomplete="off">
+      </label>
+
+      <div class="row">
+        <label>Loja
+          <input name="store" list="storeList" placeholder="Ex: Shopee" autocomplete="off">
+          <datalist id="storeList">
+            <option value="Shopee"><option value="AliExpress"><option value="Mercado Livre">
+            <option value="Amazon"><option value="Shein"><option value="Temu"><option value="Magalu">
+          </datalist>
+        </label>
+        <label>Transportadora
+          <select name="carrier" id="carrierSelect"></select>
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Status
+          <select name="status" id="statusSelect"></select>
+        </label>
+        <label>Previsão de entrega
+          <input name="eta" type="date">
+        </label>
+      </div>
+
+      <label>Observações
+        <textarea name="notes" rows="2" placeholder="Último status, valor pago, etc."></textarea>
+      </label>
+
+      <menu>
+        <button type="button" class="btn ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn primary">Salvar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- Resultado do rastreio (widget 17TRACK) -->
+  <dialog id="dlgTrack" class="dlg-track">
+    <div class="track-head">
+      <div>
+        <h2 id="trackTitle"></h2>
+        <p id="trackCode" class="hint"></p>
+      </div>
+      <button type="button" class="icon-btn" data-close aria-label="Fechar">✕</button>
+    </div>
+    <div id="trackResult" class="track-result"></div>
+    <div class="track-foot">
+      <a id="trackOfficial" class="btn small" target="_blank" rel="noopener">Site da transportadora</a>
+      <button type="button" class="btn small primary" data-close>Fechar</button>
+    </div>
+  </dialog>
+
+  <!-- Configurações -->
+  <dialog id="dlgSettings">
+    <form method="dialog" id="formSettings">
+      <h2>Configurações</h2>
+
+      <h3>Sincronizar entre computador e celular</h3>
+      <p class="hint">
+        Os rastreios ficam salvos neste navegador. Para ver a mesma lista em outros aparelhos,
+        use um <strong>Gist secreto do GitHub</strong> como “nuvem”. Crie um token em
+        <a href="https://github.com/settings/tokens/new?scopes=gist&description=Rastreazera" target="_blank" rel="noopener">github.com/settings/tokens</a>
+        com permissão só de <code>gist</code>, cole abaixo e salve. No outro aparelho, use o mesmo token e o mesmo ID do Gist.
+      </p>
+      <label>Token do GitHub (escopo gist)
+        <input name="token" type="password" autocomplete="off" placeholder="ghp_…">
+      </label>
+      <label>ID do Gist <small>(deixe vazio para criar um novo)</small>
+        <input name="gistId" autocomplete="off" placeholder="Criado automaticamente">
+      </label>
+      <div class="row-buttons">
+        <button type="button" id="btnSyncSave" class="btn primary">Salvar e sincronizar</button>
+        <button type="button" id="btnSyncOff" class="btn ghost">Desligar sincronização</button>
+      </div>
+
+      <h3>Usar no celular</h3>
+      <p class="hint">Com a sincronização ligada, mostre um QR code e aponte a câmera do celular: o site abre já configurado (mesmos pacotes, de qualquer lugar).</p>
+      <div class="row-buttons">
+        <button type="button" id="btnQrCelular" class="btn">📱 Configurar celular</button>
+      </div>
+      <div id="qrCelular" class="qr" hidden>
+        <div id="qrCodigo"></div>
+        <p class="hint">O QR contém o seu token do GitHub: não compartilhe nem tire print dele. Some ao fechar.</p>
+      </div>
+
+      <h3>Onde buscar pedidos</h3>
+      <p class="hint">Vale para a busca automática (a cada 1 hora) e para o botão 🔄 Buscar pedidos. Desmarque um local para deixá-lo de fora.</p>
+      <div id="lojasBusca" class="checks">
+        <label class="check"><input type="checkbox" name="loja" value="shopee"> Shopee</label>
+        <label class="check"><input type="checkbox" name="loja" value="aliexpress"> AliExpress</label>
+        <label class="check"><input type="checkbox" name="loja" value="olx"> OLX <small>(Verificação Completa de todas as contas)</small></label>
+      </div>
+      <p id="lojasBuscaAviso" class="hint" hidden></p>
+
+      <h3>Importar pedidos (Shopee e AliExpress)</h3>
+      <p class="hint">
+        Arraste o botão abaixo para a barra de favoritos. Depois, com a página de pedidos da Shopee ou do AliExpress aberta e logada,
+        clique no favorito: os pedidos a caminho são cadastrados (ou atualizados) aqui automaticamente.
+      </p>
+      <div class="row-buttons">
+        <a id="bookmarklet" class="btn bookmarklet" onclick="event.preventDefault(); alert('Arraste este botão para a barra de favoritos.');">📥 Importar pedidos</a>
+      </div>
+
+      <h3>Consulta automática (Shopee Xpress)</h3>
+      <p class="hint">
+        Endereço do proxy que consulta a transportadora. Rodando pelo <code>server.py</code> no computador,
+        deixe vazio. No site publicado, use o endereço do seu Cloudflare Worker (veja o README).
+      </p>
+      <label>Endereço do proxy
+        <input name="proxy" type="url" autocomplete="off" placeholder="https://rastreazera.SEU-USUARIO.workers.dev">
+      </label>
+      <div class="row-buttons">
+        <button type="button" id="btnProxySave" class="btn primary">Salvar proxy</button>
+      </div>
+
+      <h3>Backup</h3>
+      <div class="row-buttons">
+        <button type="button" id="btnExport" class="btn">Exportar JSON</button>
+        <label class="btn file-btn">Importar JSON
+          <input type="file" id="fileImport" accept="application/json,.json" hidden>
+        </label>
+      </div>
+
+      <menu>
+        <button type="button" class="btn ghost" data-close>Fechar</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="config.js"></script>
+  <script src="carriers.js"></script>
+  <script src="sync.js"></script>
+  <script src="trackers.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Rastreazera Coletor",
+  "version": "1.2",
+  "description": "Busca os pedidos da Shopee, do AliExpress e da OLX a cada 1 hora e envia para o Rastreazera (server.py em localhost:5500).",
+  "permissions": ["alarms", "scripting", "tabs", "storage"],
+  "host_permissions": [
+    "https://shopee.com.br/*",
+    "https://*.aliexpress.com/*",
+    "http://localhost:5500/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Rastreazera Coletor",
+    "default_popup": "popup.html"
+  }
+}

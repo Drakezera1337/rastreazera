@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Rastreazera Coletor</title>
+  <style>
+    :root { --bg: #ffffff; --text: #1e1b4b; --muted: #6b7280; --border: #e5e7eb; --primary: #4f46e5; --danger: #dc2626; --ok: #16a34a; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #1a1b2e; --text: #e8e8f5; --muted: #9ca3af; --border: #2d2f48; --primary: #818cf8; --danger: #f87171; --ok: #4ade80; }
+    }
+    body { margin: 0; width: 300px; font: 14px/1.4 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    main { padding: 16px; display: grid; gap: 12px; }
+    h1 { margin: 0; font-size: 16px; }
+    .estado { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .ponto { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+    .ligado .ponto { background: var(--ok); }
+    p { margin: 0; color: var(--muted); font-size: 13px; }
+    button { font: inherit; cursor: pointer; padding: 10px; border-radius: 10px; border: 1px solid var(--border); background: transparent; color: var(--text); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #btnAlternar { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+    #btnAlternar.parar { background: var(--danger); border-color: var(--danger); }
+    .linha { border-top: 1px solid var(--border); padding-top: 10px; display: grid; gap: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>📦 Rastreazera Coletor</h1>
+    <div id="estado" class="estado"><span class="ponto"></span><span id="estadoTexto">…</span></div>
+    <p id="andamento"></p>
+    <button id="btnAlternar" type="button">…</button>
+    <button id="btnAgora" type="button">🔄 Buscar agora</button>
+    <div class="linha">
+      <p id="ultima"></p>
+      <p id="proxima"></p>
+    </div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

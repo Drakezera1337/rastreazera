@@ -1,0 +1,5 @@
+﻿# Estado das buscas (contém pedidos)
+ponte_estado.json
+olx_estado.json
+__pycache__/
+server.log
