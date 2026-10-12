@@ -2,6 +2,8 @@
 
 Todos os seus rastreios (Correios, Shopee, AliExpress, Jadlog…) em um só lugar, no computador e no celular.
 
+**Site:** https://drakezera1337.github.io/rastreazera/ (os pacotes aparecem depois de ligar a sincronização — veja *Usar no celular*).
+
 Site estático (HTML + CSS + JS, sem build), feito para rodar no **GitHub Pages**, com um pequeno
 proxy para as consultas automáticas (`server.py` no PC, `worker.js` na Cloudflare em produção).
 
@@ -124,7 +126,17 @@ No GitHub: **Settings → Pages → Source: Deploy from a branch → main / (roo
 4. Copie o endereço (ex.: `https://rastreazera.SEU-USUARIO.workers.dev`).
 5. No site publicado: ⚙️ → **Endereço do proxy** → cole → **Salvar proxy** (em cada aparelho).
 
-## Sincronizar computador ↔ celular
+## Usar no celular
+
+1. No PC (`http://localhost:5500`), ⚙️ → ative a **sincronização** (token do GitHub só com o escopo `gist`).
+   O `server.py` recebe o mesmo Gist: publica cada busca concluída e atende pedidos de busca vindos do celular.
+2. ⚙️ → **📱 Configurar celular** → aponte a câmera do celular para o QR code. O site abre configurado.
+3. No celular, **Adicionar à tela inicial** para usar como app.
+
+No celular, **🔄 Buscar pedidos** pede a busca ao PC pelo Gist (o PC precisa estar ligado com o Chrome aberto);
+o resultado chega em até ~2 min. A consulta completa da Shopee no celular precisa do Cloudflare Worker (`config.js` → `proxyPadrao`).
+
+## Sincronizar computador ↔ celular (manual)
 
 1. Crie um token em https://github.com/settings/tokens/new?scopes=gist (apenas o escopo `gist`).
 2. No site, ⚙️ → cole o token → **Salvar e sincronizar**. Um Gist secreto é criado e o ID aparece no campo.
