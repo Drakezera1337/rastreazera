@@ -541,11 +541,25 @@ function scheduleSync() {
   if (!Sync.enabled()) return;
   clearTimeout(syncTimer);
   setSyncStatus('pending');
-  syncTimer = setTimeout(syncNow, 1500);
+  syncTimer = setTimeout(syncNow, 3000);
+}
+
+// Cada gravação no Gist vira uma revisão — gravar à toa (várias telas abertas, a cada 2 min)
+// aciona o limite anti-abuso do GitHub (erro 403). Por isso: só grava quando algo mudou,
+// nunca duas sincronizações ao mesmo tempo e, se o GitHub pedir pausa, espera.
+let sincronizando = false;
+let sincronizarDeNovo = false;
+let syncPausaAte = 0;
+
+function assinatura(items) {
+  return JSON.stringify([...items].sort((a, b) => (a.id < b.id ? -1 : 1)));
 }
 
 async function syncNow() {
   if (!Sync.enabled()) return setSyncStatus('off');
+  if (Date.now() < syncPausaAte) return setSyncStatus('pausa', syncPausaAte);
+  if (sincronizando) { sincronizarDeNovo = true; return; }
+  sincronizando = true;
   try {
     setSyncStatus('busy');
     const remoto = await Sync.pull();
@@ -553,10 +567,19 @@ async function syncNow() {
     save({ sync: false });
     // Busca concluída no PC: o server.py publica no Gist, então chega também ao celular
     importarUltimaBusca(remoto.busca);
-    await Sync.push(state.items);
+    if (assinatura(state.items) !== assinatura(remoto.items)) await Sync.push(state.items);
     setSyncStatus('ok');
   } catch (err) {
-    setSyncStatus('error', err.message);
+    if (err.pausaAte) {
+      syncPausaAte = err.pausaAte;
+      setSyncStatus('pausa', syncPausaAte);
+      setTimeout(syncNow, Math.max(5000, syncPausaAte - Date.now() + 2000));
+    } else {
+      setSyncStatus('error', err.message);
+    }
+  } finally {
+    sincronizando = false;
+    if (sincronizarDeNovo) { sincronizarDeNovo = false; scheduleSync(); }
   }
 }
 
@@ -836,13 +859,19 @@ function setSyncStatus(kind, detail = '') {
     busy: ['⟳', 'Sincronizando…'],
     ok: ['☁️', 'Sincronizado'],
     error: ['⚠️', `Erro na sincronização${detail ? ': ' + detail : ''}`],
+    pausa: ['⏸', `O GitHub pediu uma pausa (limite de uso) — sincronizo de novo às ${detail ? hora(detail).slice(0, 5) : 'instantes'}`],
   };
   const [icon, title] = map[kind];
   el.textContent = icon;
   el.title = title;
   el.dataset.kind = kind;
 }
-$('#syncStatus').addEventListener('click', syncNow);
+// No celular não há "passar o mouse": tocar no ícone mostra a mensagem e tenta de novo
+$('#syncStatus').addEventListener('click', () => {
+  const el = $('#syncStatus');
+  if (el.title) toast(el.title);
+  if (el.dataset.kind !== 'pausa') syncNow();
+});
 
 // ---------- Backup ----------
 $('#btnExport').addEventListener('click', () => {

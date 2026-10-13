@@ -38,7 +38,16 @@ const Sync = (() => {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
-      const msg = res.status === 401 ? 'token inválido' : res.status === 404 ? 'Gist não encontrado' : `erro ${res.status}`;
+      // 403/429 com limite: o GitHub pediu uma pausa (anti-abuso ou cota) — informa até quando
+      const restante = res.headers.get('x-ratelimit-remaining');
+      const retry = Number(res.headers.get('retry-after'));
+      const reset = Number(res.headers.get('x-ratelimit-reset'));
+      if (res.status === 429 || (res.status === 403 && (retry || restante === '0'))) {
+        const ate = retry ? Date.now() + retry * 1000 : reset ? reset * 1000 : Date.now() + 60000;
+        throw Object.assign(new Error('GitHub pediu uma pausa'), { pausaAte: ate });
+      }
+      const msg = res.status === 401 ? 'token inválido' : res.status === 404 ? 'Gist não encontrado'
+        : res.status === 403 ? 'acesso negado pelo GitHub (403) — o token ainda tem a permissão gist?' : `erro ${res.status}`;
       throw new Error(msg);
     }
     return res.json();
