@@ -3,3 +3,5 @@ ponte_estado.json
 olx_estado.json
 __pycache__/
 server.log
+.vendor/
+push_vapid.pem

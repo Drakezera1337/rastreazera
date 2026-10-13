@@ -6,12 +6,14 @@
 //   busca.json            última busca de pedidos concluída no PC (gravado pelo server.py)
 //   pedido_busca.json     { ts }: o celular pediu uma busca; o server.py do PC confere a cada minuto
 //   andamento.json        etapa da busca no PC (gravado pelo server.py) — o celular mostra o progresso
+//   push.json             aparelhos inscritos para notificações (o server.py do PC envia)
 const Sync = (() => {
   const CFG_KEY = 'rastreazera:sync';
   const FILE = 'rastreazera.json';
   const FILE_BUSCA = 'busca.json';
   const FILE_PEDIDO = 'pedido_busca.json';
   const FILE_ANDAMENTO = 'andamento.json';
+  const FILE_PUSH = 'push.json';
   const API = 'https://api.github.com/gists';
 
   function config() {
@@ -119,6 +121,20 @@ const Sync = (() => {
     return ts;
   }
 
+  // Aparelhos que recebem notificações (push.json): o server.py do PC envia para cada um.
+  // novo = null remove o aparelho.
+  async function atualizarInscricao(endpoint, novo) {
+    const { token, gistId } = config();
+    const gist = await request(`${API}/${gistId}`, { token });
+    const lista = (await lerArquivo(gist, FILE_PUSH, [])).filter((r) => r && r.endpoint !== endpoint);
+    if (novo) lista.push(novo);
+    await request(`${API}/${gistId}`, {
+      token,
+      method: 'PATCH',
+      body: { files: { [FILE_PUSH]: { content: JSON.stringify(lista, null, 1) } } },
+    });
+  }
+
   // Une duas listas: para cada id, fica a versão com updatedAt mais recente.
   function merge(a, b) {
     const map = new Map();
@@ -129,5 +145,5 @@ const Sync = (() => {
     return [...map.values()];
   }
 
-  return { config, setConfig, enabled, encontrarExistente, create, pull, push, pedirBusca, merge };
+  return { config, setConfig, enabled, encontrarExistente, create, pull, push, pedirBusca, atualizarInscricao, merge };
 })();

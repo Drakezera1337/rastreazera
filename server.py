@@ -1,4 +1,4 @@
-"""Servidor local do Rastreazera.
+﻿"""Servidor local do Rastreazera.
 
 Serve os arquivos do site e repassa consultas de rastreio que o navegador
 não pode fazer direto (bloqueio de CORS), igual ao worker.js em produção.
@@ -352,7 +352,8 @@ def sincronizar_gist():
         return False
 
     # 1) Pedido do celular
-    arquivo = (gist_request(gist).get("files") or {}).get("pedido_busca.json")
+    arquivos_gist = gist_request(gist).get("files") or {}
+    arquivo = arquivos_gist.get("pedido_busca.json")
     try:
         pedido_ts = int(json.loads(arquivo["content"]).get("ts", 0)) if arquivo else 0
     except (ValueError, TypeError, AttributeError):
@@ -392,10 +393,161 @@ def sincronizar_gist():
                     estado["busca"]["publicar"] = False
                     gravar_estado(estado)
 
+    try:
+        processar_notificacoes(gist, arquivos_gist)
+    except Exception as exc:  # noqa: BLE001 — notificação nunca derruba a sincronização
+        print(f"Notificações: {exc}", file=sys.stderr)
+
     pedido = busca.get("pedidoCelular") or {}
     pedido_aberto = (pedido.get("recebidoEm", 0) > (busca.get("ultima") or {}).get("fimEm", 0)
                      and agora_ms() - pedido.get("recebidoEm", 0) < PEDIDO_CELULAR_VALIDADE_MS)
     return bool(busca.get("atual") or busca.get("solicitadoEm") or pedido_aberto)
+
+
+# ---- Notificações push (Web Push) ----
+# Os aparelhos se inscrevem em push.json (no Gist). A cada busca concluída, compara com a anterior
+# e avisa: pedido novo, movimentação nova, pedido que saiu da lista de ativos (provavelmente entregue).
+# A chave privada VAPID fica em push_vapid.pem (fora do git); a biblioteca, em .vendor/.
+PUSH_PEM = ROOT / "push_vapid.pem"
+PUSH_CONTATO = "mailto:276884055+Drakezera1337@users.noreply.github.com"  # exigido pelo padrão VAPID (sub): e-mail noreply do GitHub
+NOMES_LOJA = {"shopee": "Shopee", "aliexpress": "AliExpress", "olx": "OLX"}
+STATUS_OLX = {"entregue": "✅ Entregue", "transito": "🚚 Em trânsito", "preparacao": "🕓 Em preparação",
+              "cancelamento": "⚠️ Cancelamento"}
+_webpush = None
+
+
+def carregar_webpush():
+    global _webpush
+    if _webpush is None:
+        vendor = str(ROOT / ".vendor")
+        if vendor not in sys.path:
+            sys.path.insert(0, vendor)
+        try:
+            from pywebpush import WebPushException, webpush
+            _webpush = (webpush, WebPushException)
+        except ImportError as exc:
+            print(f"Notificações desligadas: pywebpush não encontrado em .vendor ({exc})", file=sys.stderr)
+            _webpush = False
+    return _webpush or None
+
+
+def json_do_arquivo(arquivos, nome, padrao):
+    arquivo = arquivos.get(nome)
+    try:
+        return json.loads(arquivo["content"]) if arquivo else padrao
+    except (ValueError, TypeError, KeyError):
+        return padrao
+
+
+def assinaturas_da_busca(ultima):
+    """{codigo: {loja, nome, sig, texto}} das lojas que responderam, e o conjunto dessas lojas."""
+    mapa, lojas_ok = {}, set()
+    for loja, resultado in (ultima.get("fontes") or {}).items():
+        if "erro" in resultado:
+            continue
+        lojas_ok.add(loja)
+        for ped in resultado.get("pedidos") or []:
+            if loja == "olx":
+                codigo, nome, st = ped.get("codigoRastreio"), ped.get("titulo", ""), ped.get("statusTipo", "")
+                sig, texto = st, STATUS_OLX.get(st, st)
+            else:
+                ev = ped.get("lastEvent") or {}
+                codigo, nome = ped.get("code"), ped.get("name", "")
+                sig, texto = f"{ped.get('status')}|{ev.get('time')}", ev.get("text") or ""
+            if codigo:
+                mapa[str(codigo).upper()] = {"loja": loja, "nome": nome[:60], "sig": sig, "texto": texto[:140]}
+    return mapa, lojas_ok
+
+
+def mensagens_de_novidades(anterior, atual, lojas_ok, apelidos):
+    msgs = []
+    nome = lambda cod, info: apelidos.get(cod) or info["nome"] or cod  # noqa: E731
+    for cod, info in atual.items():
+        if cod not in anterior:
+            msgs.append(f"📦 Novo pedido ({NOMES_LOJA.get(info['loja'], info['loja'])}): {nome(cod, info)}")
+        elif anterior[cod]["sig"] != info["sig"] and info["texto"]:
+            msgs.append(f"{nome(cod, info)}: {info['texto']}")
+    for cod, info in anterior.items():
+        # Shopee/AliExpress tiram da lista de ativos o pedido entregue (a OLX mantém, com status)
+        if cod not in atual and info["loja"] in lojas_ok and info["loja"] != "olx":
+            msgs.append(f"✅ {nome(cod, info)}: saiu dos pedidos ativos da {NOMES_LOJA.get(info['loja'])} (provavelmente entregue)")
+    return msgs
+
+
+def enviar_push(inscricoes, payload):
+    """Envia para cada aparelho; devolve os endpoints que não existem mais (404/410)."""
+    lib = carregar_webpush()
+    if not lib or not inscricoes:
+        return []
+    webpush, WebPushException = lib
+    mortos = []
+    for insc in inscricoes:
+        try:
+            webpush(subscription_info={"endpoint": insc["endpoint"], "keys": insc["keys"]},
+                    data=json.dumps(payload, ensure_ascii=False), vapid_private_key=str(PUSH_PEM),
+                    vapid_claims={"sub": PUSH_CONTATO}, ttl=12 * 3600, timeout=20)
+        except WebPushException as exc:
+            status = getattr(exc.response, "status_code", None)
+            if status in (404, 410):
+                mortos.append(insc["endpoint"])
+            print(f"Push para {insc.get('aparelho', '?')}: {exc}", file=sys.stderr)
+        except (KeyError, TypeError) as exc:
+            print(f"Inscrição inválida em push.json: {exc}", file=sys.stderr)
+    return mortos
+
+
+def payload_de(msgs):
+    if len(msgs) == 1:
+        return {"title": "Rastreazera", "body": msgs[0], "tag": "rastreazera-busca"}
+    corpo = "\n".join(msgs[:6]) + (f"\n…e mais {len(msgs) - 6}" if len(msgs) > 6 else "")
+    return {"title": f"Rastreazera · {len(msgs)} novidades", "body": corpo, "tag": "rastreazera-busca"}
+
+
+def processar_notificacoes(gist, arquivos_gist):
+    if not PUSH_PEM.exists():
+        return
+    inscricoes = [i for i in json_do_arquivo(arquivos_gist, "push.json", []) if isinstance(i, dict) and i.get("endpoint")]
+    with LOCK:
+        estado = ler_estado()
+    controle = estado.get("push") or {}
+    mortos = []
+
+    # Teste pedido pelo botão "Enviar teste" do aparelho
+    testes = controle.get("testes", {})
+    for insc in inscricoes:
+        if insc.get("testeEm", 0) > testes.get(insc["endpoint"], 0):
+            testes[insc["endpoint"]] = insc["testeEm"]
+            mortos += enviar_push([insc], {"title": "Rastreazera", "body": "🔔 Teste: as notificações estão funcionando neste aparelho!",
+                                           "tag": "rastreazera-teste"})
+            print(f"Notificação de teste enviada ({insc.get('aparelho', '?')})")
+    controle["testes"] = testes
+
+    # Novidades da última busca concluída (uma vez por busca)
+    ultima = estado["busca"].get("ultima") or {}
+    if ultima.get("fimEm") and ultima["fimEm"] != controle.get("fimEmProcessado"):
+        atual, lojas_ok = assinaturas_da_busca(ultima)
+        anterior = controle.get("assinaturas")
+        apelidos = {str(p.get("code", "")).upper(): p.get("name") for p in json_do_arquivo(arquivos_gist, "rastreazera.json", [])
+                    if isinstance(p, dict) and not p.get("deleted") and p.get("name")}
+        if anterior is not None:  # na primeira busca só registra a base (não notifica o que já existia)
+            msgs = mensagens_de_novidades(anterior, atual, lojas_ok, apelidos)
+            if msgs:
+                mortos += enviar_push(inscricoes, payload_de(msgs))
+                print(f"Notificação: {len(msgs)} novidade(s) para {len(inscricoes)} aparelho(s)")
+        base = {cod: info for cod, info in (anterior or {}).items() if info["loja"] not in lojas_ok}
+        base.update(atual)
+        controle["assinaturas"] = base
+        controle["fimEmProcessado"] = ultima["fimEm"]
+
+    with LOCK:
+        estado = ler_estado()
+        estado["push"] = controle
+        gravar_estado(estado)
+
+    # Aparelhos que não existem mais saem do push.json
+    if mortos:
+        vivos = [i for i in inscricoes if i["endpoint"] not in set(mortos)]
+        gist_request(gist, "PATCH", {"files": {"push.json": {"content": json.dumps(vivos, indent=1)}}})
 
 
 def laco_gist():

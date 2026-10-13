@@ -233,7 +233,9 @@ async function refreshItem(p) {
   const result = await Trackers.fetch(p);
   const last = result.events[0];
   if (p.status !== result.status && STATUS[result.status]) {
-    adicionarNotificacao('status', `${p.name || p.code}: ${STATUS[result.status].icon} ${STATUS[result.status].label}`);
+    const texto = `${p.name || p.code}: ${STATUS[result.status].icon} ${STATUS[result.status].label}`;
+    adicionarNotificacao('status', texto);
+    notificarSistema(texto);
   }
   p.status = result.status;
   p.lastEvent = last ? { text: last.text, time: last.time } : null;
@@ -458,6 +460,7 @@ $('#btnSettings').addEventListener('click', () => {
   formSettings.gistId.value = cfg.gistId || '';
   formSettings.proxy.value = localStorage.getItem('rastreazera:proxy') || '';
   carregarLojasBusca();
+  renderNotifAparelho();
   dlgSettings.showModal();
 });
 
@@ -596,6 +599,87 @@ async function enviarGistAoServidor(gist = Sync.enabled() ? Sync.config() : null
       body: JSON.stringify({ gist: gist && { token: gist.token, gistId: gist.gistId } }),
     });
   } catch { /* sem server.py (site publicado) */ }
+}
+
+// ---------- Notificações push (enviadas pelo server.py do PC) ----------
+// O aparelho se inscreve (Push API) e guarda a inscrição em push.json no Gist; o PC envia a cada
+// busca com novidades. "Enviar teste" marca testeEm na inscrição e o PC responde em até 1 min.
+const PUSH_KEY = 'rastreazera:push'; // inscrição deste aparelho
+
+function pushSuportado() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function chaveParaBytes(b64url) {
+  const bin = atob(b64url.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+function descreverAparelho() {
+  const ua = navigator.userAgent;
+  const tipo = /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : 'Computador';
+  return `${tipo} (ativado em ${fmtDate(Date.now())})`;
+}
+
+function renderNotifAparelho() {
+  const inscricao = lerJSON(PUSH_KEY, null);
+  const ativo = Boolean(inscricao) && pushSuportado() && Notification.permission === 'granted';
+  $('#notifStatusAparelho').textContent = !pushSuportado()
+    ? '⚠️ Este navegador não suporta notificações. No iPhone, abra o Rastreazera pelo ícone da tela de início (iOS 16.4 ou mais novo).'
+    : ativo ? '✅ Notificações ativas neste aparelho.'
+      : Notification.permission === 'denied' ? '🚫 Notificações bloqueadas: libere nas configurações do celular/navegador.'
+        : 'Notificações desligadas neste aparelho.';
+  $('#btnAtivarPush').hidden = ativo || !pushSuportado();
+  $('#btnTestarPush').hidden = !ativo;
+  $('#btnDesativarPush').hidden = !ativo;
+}
+
+$('#btnAtivarPush').addEventListener('click', async () => {
+  if (!Sync.enabled()) return toast('Ligue a sincronização primeiro (⚙️ → Ler QR do PC)');
+  const permissao = await Notification.requestPermission();
+  if (permissao !== 'granted') { renderNotifAparelho(); return toast('Sem permissão para notificar'); }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription())
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chaveParaBytes(RZ_CONFIG.pushChavePublica) });
+    const { endpoint, keys } = sub.toJSON();
+    const registro = { endpoint, keys, aparelho: descreverAparelho(), criadoEm: Date.now() };
+    await Sync.atualizarInscricao(endpoint, registro);
+    gravarJSON(PUSH_KEY, registro);
+    toast('Notificações ativadas neste aparelho');
+  } catch (err) {
+    toast(`Não foi possível ativar: ${err.message}`);
+  }
+  renderNotifAparelho();
+});
+
+$('#btnTestarPush').addEventListener('click', async () => {
+  const registro = lerJSON(PUSH_KEY, null);
+  if (!registro) return renderNotifAparelho();
+  try {
+    await Sync.atualizarInscricao(registro.endpoint, { ...registro, testeEm: Date.now() });
+    toast('Teste pedido ao PC — chega em até 1 min (com o PC ligado)');
+  } catch (err) {
+    toast(`Não foi possível pedir o teste: ${err.message}`);
+  }
+});
+
+$('#btnDesativarPush').addEventListener('click', async () => {
+  const registro = lerJSON(PUSH_KEY, null);
+  try {
+    const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    await sub?.unsubscribe();
+    if (registro) await Sync.atualizarInscricao(registro.endpoint, null);
+  } catch { /* segue desligando localmente */ }
+  gravarJSON(PUSH_KEY, null);
+  renderNotifAparelho();
+  toast('Notificações desativadas neste aparelho');
+});
+
+// App em segundo plano detectou mudança (ex.: status da Shopee pelo Worker): notificação do sistema
+function notificarSistema(body) {
+  if (!document.hidden || !pushSuportado() || Notification.permission !== 'granted') return;
+  navigator.serviceWorker.controller?.postMessage({ tipo: 'notificar', title: 'Rastreazera', body, tag: `status-${Date.now()}` });
 }
 
 // ---------- Configurar o celular por QR code ----------

@@ -8,8 +8,10 @@
   <meta name="theme-color" content="#4f46e5">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=23">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Rastreazera">
+  <link rel="stylesheet" href="styles.css?v=24">
 </head>
 <body>
   <header class="topbar">
@@ -183,6 +185,15 @@
         <p class="hint">O QR contém o seu token do GitHub: não compartilhe nem tire print dele. Some ao fechar.</p>
       </div>
 
+      <h3>Notificações</h3>
+      <p class="hint">Avisa neste aparelho quando uma busca encontra novidades (pedido novo, movimentação, entrega) — mesmo com o app fechado. Enviadas pelo PC (precisa estar ligado). No iPhone: iOS 16.4+ e o app aberto pela tela de início.</p>
+      <p id="notifStatusAparelho" class="hint"></p>
+      <div class="row-buttons">
+        <button type="button" id="btnAtivarPush" class="btn primary">🔔 Ativar notificações</button>
+        <button type="button" id="btnTestarPush" class="btn" hidden>Enviar teste</button>
+        <button type="button" id="btnDesativarPush" class="btn ghost" hidden>Desativar</button>
+      </div>
+
       <h3>Onde buscar pedidos</h3>
       <p class="hint">Vale para a busca automática (a cada 1 hora) e para o botão 🔄 Buscar pedidos. Desmarque um local para deixá-lo de fora.</p>
       <div id="lojasBusca" class="checks">
@@ -230,10 +241,10 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="config.js?v=23"></script>
-  <script src="carriers.js?v=23"></script>
-  <script src="sync.js?v=23"></script>
-  <script src="trackers.js?v=23"></script>
-  <script src="app.js?v=23"></script>
+  <script src="config.js?v=24"></script>
+  <script src="carriers.js?v=24"></script>
+  <script src="sync.js?v=24"></script>
+  <script src="trackers.js?v=24"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>
