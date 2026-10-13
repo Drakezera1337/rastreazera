@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --bg: #f4f5fb;
   --surface: #ffffff;
   --text: #1e1b4b;
@@ -27,6 +27,8 @@
 }
 
 * { box-sizing: border-box; }
+/* hidden sempre esconde, mesmo em elementos com display próprio (grid/flex) */
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
