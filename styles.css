@@ -324,3 +324,6 @@ dialog label.check input { width: 18px; height: 18px; margin: 0; accent-color: v
 .passo-aviso { color: #d97706; }
 
 .versao { margin-right: auto; align-self: center; font-size: 0.75rem; color: var(--muted); }
+
+/* Última e próxima busca */
+.info-busca { margin: 10px 2px 0; font-size: 0.8rem; color: var(--muted); }

@@ -54,6 +54,17 @@ BUSCA_MAX_MS = 40 * 60 * 1000           # busca que não terminou nesse tempo fe
 LOJAS = ("shopee", "aliexpress", "olx")
 
 
+COLETOR_ONLINE_MS = 3 * 60 * 1000  # o Coletor dá sinal a cada 1 min; sem sinal nesse tempo = Chrome fechado
+
+
+def agenda_publica(busca):
+    """Próxima busca automática para o app. Sem o horário do sinal (mudaria a cada minuto e geraria
+    gravações no Gist): só "coletorOnline", que muda quando o Chrome abre/fecha."""
+    agenda = busca.get("agenda") or {}
+    online = bool(agenda.get("em")) and agora_ms() - agenda["em"] < COLETOR_ONLINE_MS
+    return {"coletorOnline": online, "ativo": agenda.get("ativo", False), "proxima": agenda.get("proxima")}
+
+
 def agora_ms():
     return int(time.time() * 1000)
 
@@ -164,6 +175,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "atual": busca.get("atual"),
                 "ultima": busca.get("ultima"),
                 "olxProgresso": estado["olx"].get("progresso"),
+                "agenda": agenda_publica(busca),
             }
         # Sem CORS liberado: só a própria página (mesma origem) e as extensões leem os pedidos
         self.send_json(200, resposta, cors=False)
@@ -229,6 +241,10 @@ class Handler(SimpleHTTPRequestHandler):
             busca["atual"] = {"inicio": agora, "origem": str(dados.get("origem", ""))[:60],
                               "esperadas": esperadas, "fontes": {}}
             # a OLX é pedida em atualizar_prazos, quando as outras lojas terminarem
+        elif acao == "busca/agenda":  # Coletor informa (a cada 1 min) se a automática está ligada e a próxima
+            busca["agenda"] = {"ativo": bool(dados.get("ativo")),
+                               "proxima": int(dados["proxima"]) if dados.get("proxima") else None,
+                               "em": agora}
         elif acao == "busca/cancelar":  # botão "Parar" do Coletor durante uma busca
             atual = busca.get("atual")
             busca.pop("solicitadoEm", None)
@@ -318,6 +334,7 @@ def montar_andamento(estado):
         "pedido": busca.get("pedidoCelular"),
         "ultimaFimEm": (busca.get("ultima") or {}).get("fimEm"),
         "lojasAtivas": estado["config"]["lojas"],
+        "agenda": agenda_publica(busca),
         "etapa": "ociosa",
     }
     if atual:

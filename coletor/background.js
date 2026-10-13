@@ -35,9 +35,18 @@ async function estado() {
 async function agendar() {
   const { ativo } = await estado();
   // Confere a cada 1 min se o Rastreazera pediu uma busca pelo botão (sempre, mesmo parada)
-  chrome.alarms.create('checar', { periodInMinutes: 1 });
-  if (ativo) chrome.alarms.create('busca', { periodInMinutes: INTERVALO_MIN });
-  else chrome.alarms.clear('busca');
+  await chrome.alarms.create('checar', { periodInMinutes: 1 });
+  if (ativo) await chrome.alarms.create('busca', { periodInMinutes: INTERVALO_MIN });
+  else await chrome.alarms.clear('busca');
+  reportarAgenda();
+}
+
+// Conta ao server.py se a busca automática está ligada e quando é a próxima (o app mostra).
+// Também serve de sinal de vida: chamado a cada 1 min pelo alarm 'checar'.
+async function reportarAgenda() {
+  const { ativo } = await estado();
+  const alarme = await chrome.alarms.get('busca');
+  await api('/api/busca/agenda', { ativo, proxima: ativo ? alarme?.scheduledTime || null : null }).catch(() => {});
 }
 
 chrome.runtime.onInstalled.addListener(agendar);
@@ -51,7 +60,7 @@ chrome.runtime.onStartup.addListener(async () => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'busca' && (await estado()).ativo) rodarBusca('automática');
-  if (alarm.name === 'checar') checarSolicitacao();
+  if (alarm.name === 'checar') { checarSolicitacao(); reportarAgenda(); }
 });
 
 // ---------- Painel (popup.html) ----------

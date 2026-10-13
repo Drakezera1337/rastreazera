@@ -570,6 +570,7 @@ async function syncNow() {
     save({ sync: false });
     // Busca concluída no PC: o server.py publica no Gist, então chega também ao celular
     importarUltimaBusca(remoto.busca);
+    if (!TEM_SERVIDOR) atualizarInfoBusca(remoto.busca?.fimEm, remoto.andamento?.agenda);
     if (assinatura(state.items) !== assinatura(remoto.items)) await Sync.push(state.items);
     setSyncStatus('ok');
   } catch (err) {
@@ -600,6 +601,53 @@ async function enviarGistAoServidor(gist = Sync.enabled() ? Sync.config() : null
     });
   } catch { /* sem server.py (site publicado) */ }
 }
+
+// ---------- Última e próxima busca automática ----------
+// Vem do server.py (PC: /api/busca/estado) ou do Gist (celular: busca.json + andamento.json).
+// Guardada localmente para aparecer na hora ao abrir o app.
+const INFO_BUSCA_KEY = 'rastreazera:infoBusca';
+
+function atualizarInfoBusca(ultimaFimEm, agenda) {
+  const atual = lerJSON(INFO_BUSCA_KEY, {}) || {};
+  const nova = {
+    ultimaFimEm: ultimaFimEm || atual.ultimaFimEm || null,
+    agenda: agenda === undefined ? atual.agenda : agenda,
+  };
+  gravarJSON(INFO_BUSCA_KEY, nova);
+  renderInfoBusca();
+}
+
+function diaHora(ts) {
+  const d = new Date(ts);
+  const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const dia = new Date(ts); dia.setHours(0, 0, 0, 0);
+  const diff = Math.round((dia - hoje) / 86400000);
+  return diff === 0 ? `hoje ${hm}` : diff === -1 ? `ontem ${hm}` : diff === 1 ? `amanhã ${hm}`
+    : `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${hm}`;
+}
+
+function renderInfoBusca() {
+  const el = $('#infoBusca');
+  const info = lerJSON(INFO_BUSCA_KEY, null);
+  if (!info || (!info.ultimaFimEm && !info.agenda)) { el.hidden = true; return; }
+  const partes = [];
+  partes.push(info.ultimaFimEm
+    ? `Última busca: ${diaHora(info.ultimaFimEm)} (${tempoRelativo(info.ultimaFimEm)})`
+    : 'Nenhuma busca concluída ainda');
+  const a = info.agenda;
+  if (a) {
+    if (!a.coletorOnline) partes.push('Próxima: quando o Chrome do PC abrir');
+    else if (!a.ativo) partes.push('Busca automática parada (▶ Iniciar no Coletor)');
+    else if (a.proxima) {
+      const min = Math.round((a.proxima - Date.now()) / 60000);
+      partes.push(min <= 0 ? 'Próxima: a qualquer momento' : `Próxima: ${diaHora(a.proxima).replace('hoje ', '')} (em ${min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`})`);
+    }
+  }
+  el.textContent = `🕒 ${partes.join(' · ')}`;
+  el.hidden = false;
+}
+setInterval(() => { if (!document.hidden) renderInfoBusca(); }, 60000);
 
 // ---------- Notificações push (enviadas pelo server.py do PC) ----------
 // O aparelho se inscreve (Push API) e guarda a inscrição em push.json no Gist; o PC envia a cada
@@ -1303,6 +1351,7 @@ async function checarBusca() {
   }
   mostrarProgressoBusca(estado);
   importarUltimaBusca(estado.ultima);
+  atualizarInfoBusca(estado.ultima?.fimEm, estado.agenda);
 
   // O Coletor confere pedidos a cada 1 min: sem resposta em 2,5 min, ele não está rodando
   if (buscaSolicitadaEm && estado.solicitadoEm && Date.now() - buscaSolicitadaEm > 150000) {
@@ -1370,6 +1419,7 @@ function toast(msg) {
 fillSelects();
 render();
 renderNotificacoes();
+renderInfoBusca();
 importarConfigDoHash();
 importFromHash();
 buildBookmarklet();
