@@ -305,3 +305,17 @@ dialog label.check input { width: 18px; height: 18px; margin: 0; accent-color: v
 /* ----- Leitor de QR (celular) ----- */
 .leitor-qr { display: grid; justify-items: center; gap: 8px; }
 .leitor-qr video { width: 100%; max-width: 320px; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: #000; }
+
+/* ----- Andamento da busca pedida pelo celular ----- */
+.andamento {
+  margin: 12px 0 0; padding: 10px 14px 12px; border-radius: 12px;
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface)); border: 1px solid var(--border);
+}
+.andamento-topo { display: flex; justify-content: space-between; align-items: center; }
+.andamento-topo .icon-btn { width: 32px; height: 32px; font-size: 1rem; }
+.andamento-lista { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; font-size: 0.88rem; }
+.andamento-lista li { display: flex; gap: 8px; align-items: baseline; }
+.passo-icone { flex: none; }
+.andamento-lista time { color: var(--muted); font-size: 0.78rem; }
+.passo-erro { color: var(--danger); }
+.passo-aviso { color: #d97706; }

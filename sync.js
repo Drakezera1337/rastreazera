@@ -1,15 +1,17 @@
-// Sincronização opcional usando um Gist secreto do GitHub como armazenamento.
+﻿// Sincronização opcional usando um Gist secreto do GitHub como armazenamento.
 // A API do GitHub aceita chamadas direto do navegador (CORS), então funciona no GitHub Pages.
 //
 // Arquivos no Gist:
 //   rastreazera.json      pacotes (cada aparelho une com os seus e envia de volta)
 //   busca.json            última busca de pedidos concluída no PC (gravado pelo server.py)
 //   pedido_busca.json     { ts }: o celular pediu uma busca; o server.py do PC confere a cada minuto
+//   andamento.json        etapa da busca no PC (gravado pelo server.py) — o celular mostra o progresso
 const Sync = (() => {
   const CFG_KEY = 'rastreazera:sync';
   const FILE = 'rastreazera.json';
   const FILE_BUSCA = 'busca.json';
   const FILE_PEDIDO = 'pedido_busca.json';
+  const FILE_ANDAMENTO = 'andamento.json';
   const API = 'https://api.github.com/gists';
 
   function config() {
@@ -42,6 +44,16 @@ const Sync = (() => {
     return res.json();
   }
 
+  // Gist do Rastreazera que já existe na conta (evita criar um segundo ao colar só o token).
+  // Prefere o que o PC usa (tem busca.json); senão, o atualizado mais recentemente.
+  async function encontrarExistente(token) {
+    const lista = await request(`${API}?per_page=100`, { token });
+    const nossos = lista.filter((g) => g.files?.[FILE] && /rastreazera/i.test(g.description || ''));
+    nossos.sort((a, b) => Boolean(b.files[FILE_BUSCA]) - Boolean(a.files[FILE_BUSCA])
+      || new Date(b.updated_at) - new Date(a.updated_at));
+    return nossos[0]?.id || null;
+  }
+
   async function create(token, items) {
     const gist = await request(API, {
       token,
@@ -63,7 +75,7 @@ const Sync = (() => {
     try { return JSON.parse(content || 'null') ?? padrao; } catch { return padrao; }
   }
 
-  // { items, busca, pedido } — busca/pedido são null quando não existem
+  // { items, busca, pedido, andamento } — os três últimos são null quando não existem
   async function pull() {
     const { token, gistId } = config();
     const gist = await request(`${API}/${gistId}`, { token });
@@ -72,6 +84,7 @@ const Sync = (() => {
       items: Array.isArray(items) ? items : [],
       busca: await lerArquivo(gist, FILE_BUSCA, null),
       pedido: await lerArquivo(gist, FILE_PEDIDO, null),
+      andamento: await lerArquivo(gist, FILE_ANDAMENTO, null),
     };
   }
 
@@ -84,14 +97,17 @@ const Sync = (() => {
     });
   }
 
-  // Celular (sem server.py): pede ao PC uma busca de pedidos
+  // Celular (sem server.py): pede ao PC uma busca de pedidos. Devolve o ts do pedido
+  // (o andamento.json do PC repete esse ts quando recebe).
   async function pedirBusca() {
     const { token, gistId } = config();
+    const ts = Date.now();
     await request(`${API}/${gistId}`, {
       token,
       method: 'PATCH',
-      body: { files: { [FILE_PEDIDO]: { content: JSON.stringify({ ts: Date.now() }) } } },
+      body: { files: { [FILE_PEDIDO]: { content: JSON.stringify({ ts }) } } },
     });
+    return ts;
   }
 
   // Une duas listas: para cada id, fica a versão com updatedAt mais recente.
@@ -104,5 +120,5 @@ const Sync = (() => {
     return [...map.values()];
   }
 
-  return { config, setConfig, enabled, create, pull, push, pedirBusca, merge };
+  return { config, setConfig, enabled, encontrarExistente, create, pull, push, pedirBusca, merge };
 })();

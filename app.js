@@ -493,7 +493,10 @@ $('#btnSyncSave').addEventListener('click', async () => {
   try {
     setSyncStatus('busy');
     if (!gistId) {
-      gistId = await Sync.create(token, state.items);
+      // Reaproveita o Gist do Rastreazera que já existe (o mesmo do PC); só cria se não houver nenhum
+      gistId = await Sync.encontrarExistente(token);
+      if (gistId) toast('Usando o Gist do Rastreazera que já existia na sua conta');
+      else gistId = await Sync.create(token, state.items);
       formSettings.gistId.value = gistId;
     }
     Sync.setConfig({ token, gistId });
@@ -532,7 +535,6 @@ async function syncNow() {
     save({ sync: false });
     // Busca concluída no PC: o server.py publica no Gist, então chega também ao celular
     importarUltimaBusca(remoto.busca);
-    acompanharPedidoRemoto(remoto.busca);
     await Sync.push(state.items);
     setSyncStatus('ok');
   } catch (err) {
@@ -540,9 +542,8 @@ async function syncNow() {
   }
 }
 
-// Com a tela aberta, sincroniza a cada 2 min (30 s enquanto espera uma busca pedida pelo celular)
-setInterval(() => { if (!document.hidden && !lerJSON(PEDIDO_REMOTO_KEY, 0)) syncNow(); }, 120000);
-setInterval(() => { if (!document.hidden && lerJSON(PEDIDO_REMOTO_KEY, 0)) syncNow(); }, 30000);
+// Com a tela aberta, sincroniza a cada 2 min (uma busca pedida pelo celular é acompanhada à parte)
+setInterval(() => { if (!document.hidden) syncNow(); }, 120000);
 
 // O server.py (no PC) usa o mesmo Gist para publicar as buscas e receber pedidos do celular
 async function enviarGistAoServidor(gist = Sync.enabled() ? Sync.config() : null) {
@@ -693,37 +694,121 @@ $('#btnPararQr').addEventListener('click', pararLeitorQr);
 $('#dlgSettings').addEventListener('close', pararLeitorQr);
 
 // ---------- Busca pedida pelo celular (sem server.py): o PC recebe pelo Gist ----------
+// O PC publica cada etapa em andamento.json; o celular lê a cada 15 s e mostra o progresso.
 const PEDIDO_REMOTO_KEY = 'rastreazera:pedidoRemoto';
-const PEDIDO_REMOTO_MAX_MS = 20 * 60000;
+const PEDIDO_REMOTO_MAX_MS = 25 * 60000;
+const PC_SEM_RESPOSTA_MS = 150000; // o server.py confere pedidos a cada 1 min
+const ACOMPANHAR_MS = 15000;
+let acompanhamentoTimer = null;
 
 async function pedirBuscaRemota() {
   if (!Sync.enabled()) return toast('Para buscar pelo celular, configure a sincronização em ⚙️ (QR code no PC)');
+  let ts;
   try {
-    await Sync.pedirBusca();
+    ts = await Sync.pedirBusca();
   } catch (err) {
     return toast(`Não foi possível pedir a busca: ${err.message}`);
   }
-  gravarJSON(PEDIDO_REMOTO_KEY, Date.now());
-  toast('Busca pedida ao PC');
-  acompanharPedidoRemoto(null);
+  gravarJSON(PEDIDO_REMOTO_KEY, ts);
+  renderAndamento(ts, null);
+  acompanhamentoTimer = setTimeout(acompanharBuscaRemota, 3000);
 }
 
-function acompanharPedidoRemoto(buscaRemota) {
-  const pedidoEm = Number(lerJSON(PEDIDO_REMOTO_KEY, 0)) || 0;
-  if (!pedidoEm) return;
-  const el = $('#olxStatus');
-  if (buscaRemota?.fimEm > pedidoEm) {
-    gravarJSON(PEDIDO_REMOTO_KEY, null); // chegou (importarUltimaBusca já notificou)
-    el.hidden = true;
-  } else if (Date.now() - pedidoEm > PEDIDO_REMOTO_MAX_MS) {
-    gravarJSON(PEDIDO_REMOTO_KEY, null);
-    el.hidden = true;
-    adicionarNotificacao('busca', 'O PC não respondeu ao pedido de busca (ele precisa estar ligado, com o Chrome aberto). A busca roda quando ele ligar.');
-  } else {
-    el.textContent = 'Busca pedida ao PC — o resultado chega aqui quando terminar (o PC precisa estar ligado)…';
-    el.hidden = false;
-  }
+function encerrarAcompanhamento() {
+  clearTimeout(acompanhamentoTimer);
+  gravarJSON(PEDIDO_REMOTO_KEY, null);
+  $('#andamentoRemoto').hidden = true;
+  $('#btnBuscar').disabled = false;
 }
+
+async function acompanharBuscaRemota() {
+  clearTimeout(acompanhamentoTimer);
+  const pedidoEm = Number(lerJSON(PEDIDO_REMOTO_KEY, 0)) || 0;
+  if (!pedidoEm || !Sync.enabled()) return;
+  if (document.hidden) return; // retoma ao voltar para a tela (visibilitychange)
+
+  let remoto = null;
+  let erroConexao = '';
+  try { remoto = await Sync.pull(); } catch (err) { erroConexao = err.message; }
+
+  // Concluída: a busca.json do PC é posterior ao pedido → importa e encerra (o 🔔 mostra o resumo)
+  if (remoto?.busca?.fimEm > pedidoEm) {
+    encerrarAcompanhamento();
+    await syncNow();
+    return;
+  }
+  const pedidoPc = remoto?.andamento?.pedido?.ts === pedidoEm ? remoto.andamento.pedido : null;
+  if (pedidoPc?.erro) { // erro definitivo (ex.: nenhuma loja marcada): mostra e para de acompanhar
+    renderAndamento(pedidoEm, remoto.andamento);
+    clearTimeout(acompanhamentoTimer);
+    gravarJSON(PEDIDO_REMOTO_KEY, null);
+    $('#btnBuscar').disabled = false;
+    return;
+  }
+  if (Date.now() - pedidoEm > PEDIDO_REMOTO_MAX_MS) {
+    encerrarAcompanhamento();
+    adicionarNotificacao('busca', 'A busca pedida pelo celular não terminou em 25 min (o PC precisa estar ligado, com o Chrome aberto).');
+    return;
+  }
+  renderAndamento(pedidoEm, remoto?.andamento, erroConexao, Boolean(remoto && !remoto.andamento));
+  acompanhamentoTimer = setTimeout(acompanharBuscaRemota, ACOMPANHAR_MS);
+}
+
+function hora(ts) {
+  return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// Etapas: ✅ feita · ⏳ esperando · ⚠️ demorando · ❌ problema
+// semSinalDoPc: o Gist deste aparelho nunca recebeu andamento.json (o PC usa outro Gist?)
+function renderAndamento(pedidoEm, a, erroConexao = '', semSinalDoPc = false) {
+  const passos = [];
+  const passo = (tipo, texto, quando) => passos.push(
+    `<li class="passo-${tipo}"><span class="passo-icone">${{ ok: '✅', espera: '⏳', aviso: '⚠️', erro: '❌' }[tipo]}</span>
+       <span>${texto}${quando ? ` <time>${hora(quando)}</time>` : ''}</span></li>`);
+
+  passo('ok', 'Pedido enviado ao PC', pedidoEm);
+  const pedidoPc = a?.pedido?.ts === pedidoEm ? a.pedido : null;
+  if (!pedidoPc) {
+    if (semSinalDoPc) {
+      passo('erro', 'Este aparelho está num Gist que o PC não usa. No PC, ⚙️ → Mostrar QR, e aqui ⚙️ → Ler QR do PC.');
+    } else if (Date.now() - pedidoEm > PC_SEM_RESPOSTA_MS) {
+      passo('aviso', 'O PC ainda não recebeu o pedido. Ele está ligado, com o servidor rodando? Continuo tentando…');
+    } else {
+      passo('espera', 'Aguardando o PC receber (ele confere a cada 1 min)…');
+    }
+  } else {
+    passo('ok', 'PC recebeu o pedido', pedidoPc.recebidoEm);
+    if (pedidoPc.erro) {
+      passo('erro', esc(pedidoPc.erro));
+    } else if (a.etapa === 'aguardando_coletor') {
+      passo(a.erro ? 'erro' : 'espera', a.erro ? esc(a.erro) : 'Aguardando a extensão Rastreazera Coletor no Chrome (até 1 min)…');
+    } else if (a.etapa === 'buscando') {
+      passo('ok', 'Busca iniciada no Chrome', a.busca.inicio);
+      for (const loja of ORDEM_FONTES.filter((l) => a.busca.esperadas.includes(l))) {
+        const r = a.busca.fontes[loja];
+        if (r?.erro) passo('erro', `${FONTES[loja]}: ${esc(r.erro)}`);
+        else if (r) passo('ok', `${FONTES[loja]}: ${plural(r.pedidos, 'pedido encontrado', 'pedidos encontrados')}`);
+        else if (loja !== 'olx') passo('espera', `${FONTES[loja]}: buscando…`);
+        else if (!a.busca.olxPedida) passo('espera', 'OLX: começa depois das outras lojas');
+        else if (!a.busca.olxIniciada) passo('espera', 'OLX: aguardando a extensão OLX Dashboard…');
+        else {
+          const contas = (a.busca.olxContas || [])
+            .map((c) => `${esc(c.nome)} ${{ ok: '✅', verificando: '🔄', erro: '❌' }[c.status] || '⏳'}`).join(' ');
+          passo('espera', `OLX: verificando as contas${contas ? ` — ${contas}` : '…'}`);
+        }
+      }
+    } else {
+      passo('espera', 'Finalizando…');
+    }
+  }
+  if (erroConexao) passo('aviso', `Sem conexão com o GitHub agora (${esc(erroConexao)}). Tentando de novo…`);
+
+  $('#andamentoLista').innerHTML = passos.join('');
+  $('#andamentoRemoto').hidden = false;
+  $('#btnBuscar').disabled = true;
+}
+
+$('#btnFecharAndamento').addEventListener('click', encerrarAcompanhamento);
 
 function setSyncStatus(kind, detail = '') {
   const el = $('#syncStatus');
@@ -1162,7 +1247,9 @@ syncNow().then(refreshAll);
 // Buscas automáticas que terminaram enquanto o site estava fechado + acompanhamento (só com o server.py)
 checarBusca();
 // Ao voltar para a aba (ex.: no celular), puxa as novidades do outro aparelho e das transportadoras
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { syncNow().then(refreshAll); checarBusca(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { syncNow().then(refreshAll); checarBusca(); acompanharBuscaRemota(); } });
+// Busca pedida pelo celular ainda em andamento (app foi fechado e reaberto)
+acompanharBuscaRemota();
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});

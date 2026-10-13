@@ -46,6 +46,13 @@
     </section>
 
     <p id="olxStatus" class="olx-status" hidden></p>
+    <section id="andamentoRemoto" class="andamento" hidden aria-live="polite">
+      <div class="andamento-topo">
+        <strong>Busca pedida ao PC</strong>
+        <button type="button" id="btnFecharAndamento" class="icon-btn" aria-label="Parar de acompanhar">✕</button>
+      </div>
+      <ol id="andamentoLista" class="andamento-lista"></ol>
+    </section>
     <section id="stats" class="stats"></section>
     <section id="list" class="list" aria-live="polite"></section>
   </main>
@@ -140,7 +147,7 @@
       <label>Token do GitHub (escopo gist)
         <input name="token" type="password" autocomplete="off" placeholder="ghp_…">
       </label>
-      <label>ID do Gist <small>(deixe vazio para criar um novo)</small>
+      <label>ID do Gist <small>(deixe vazio: usa o Gist do Rastreazera que já existe, ou cria um)</small>
         <input name="gistId" autocomplete="off" placeholder="Criado automaticamente">
       </label>
       <div class="row-buttons">

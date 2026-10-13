@@ -1,4 +1,4 @@
-﻿"""Servidor local do Rastreazera.
+"""Servidor local do Rastreazera.
 
 Serve os arquivos do site e repassa consultas de rastreio que o navegador
 não pode fazer direto (bloqueio de CORS), igual ao worker.js em produção.
@@ -288,11 +288,15 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 # ---- Ponte com o celular pelo Gist (o site publicado não alcança este PC) ----
-# A cada minuto: publica a última busca concluída em busca.json e confere pedido_busca.json
-# (o botão "Buscar pedidos" do celular grava { ts } lá); um pedido novo vira uma busca aqui.
+# Publica a última busca concluída em busca.json e o andamento da busca atual em andamento.json;
+# confere pedido_busca.json (o botão "Buscar pedidos" do celular grava { ts } lá) — um pedido novo
+# vira uma busca aqui. A cada 1 min quando ocioso; a cada 10 s com busca ou pedido em andamento.
 GIST_API = "https://api.github.com/gists/"
 GIST_INTERVALO_S = 60
+GIST_INTERVALO_ATIVO_S = 10
 PEDIDO_CELULAR_VALIDADE_MS = 30 * 60 * 1000  # pedido antigo (PC estava desligado) não dispara busca
+COLETOR_SEM_RESPOSTA_MS = 150 * 1000          # o Coletor confere pedidos a cada 1 min
+_andamento_publicado = None                  # último andamento enviado (só envia quando muda)
 
 
 def gist_request(gist, method="GET", corpo=None):
@@ -306,23 +310,48 @@ def gist_request(gist, method="GET", corpo=None):
         return json.loads(res.read())
 
 
+def montar_andamento(estado):
+    """Resumo da busca para o celular: etapa atual, lojas, contas da OLX e erros."""
+    busca, olx = estado["busca"], estado["olx"]
+    atual = busca.get("atual")
+    andamento = {
+        "pedido": busca.get("pedidoCelular"),
+        "ultimaFimEm": (busca.get("ultima") or {}).get("fimEm"),
+        "lojasAtivas": estado["config"]["lojas"],
+        "etapa": "ociosa",
+    }
+    if atual:
+        andamento["etapa"] = "buscando"
+        andamento["busca"] = {
+            "inicio": atual["inicio"],
+            "origem": atual.get("origem", ""),
+            "esperadas": atual["esperadas"],
+            "fontes": {loja: ({"erro": r["erro"]} if "erro" in r else {"pedidos": len(r.get("pedidos") or [])})
+                       for loja, r in atual["fontes"].items()},
+            "olxPedida": bool(atual.get("olxPedidoEm")),
+            "olxIniciada": bool(atual.get("olxPedidoEm")) and not olx.get("solicitadoEm"),
+            "olxContas": (olx.get("progresso") or {}).get("contas") if atual.get("olxPedidoEm") else None,
+        }
+    elif busca.get("solicitadoEm"):
+        andamento["etapa"] = "aguardando_coletor"
+        andamento["aguardandoDesde"] = busca["solicitadoEm"]
+        if agora_ms() - busca["solicitadoEm"] > COLETOR_SEM_RESPOSTA_MS:
+            andamento["erro"] = ("A extensão Rastreazera Coletor não respondeu. O Chrome está aberto com ela? "
+                                 "A busca fica pendente e roda quando ela abrir.")
+    return andamento
+
+
 def sincronizar_gist():
+    """Uma rodada de sincronização. Devolve True se há busca/pedido em andamento (rodar de novo logo)."""
+    global _andamento_publicado
     with LOCK:
         estado = ler_estado()
+        atualizar_prazos(estado)
     gist = estado.get("segredos", {}).get("gist")
     if not gist:
-        return
-    busca = estado["busca"]
+        return False
 
-    ultima = busca.get("ultima")
-    if busca.get("publicar") and ultima:
-        gist_request(gist, "PATCH", {"files": {"busca.json": {"content": json.dumps(ultima, ensure_ascii=False)}}})
-        with LOCK:
-            estado = ler_estado()
-            if (estado["busca"].get("ultima") or {}).get("fimEm") == ultima.get("fimEm"):
-                estado["busca"]["publicar"] = False
-                gravar_estado(estado)
-
+    # 1) Pedido do celular
     arquivo = (gist_request(gist).get("files") or {}).get("pedido_busca.json")
     try:
         pedido_ts = int(json.loads(arquivo["content"]).get("ts", 0)) if arquivo else 0
@@ -330,23 +359,53 @@ def sincronizar_gist():
         pedido_ts = 0
     with LOCK:
         estado = ler_estado()
+        atualizar_prazos(estado)
         busca = estado["busca"]
         if pedido_ts > busca.get("pedidoCelularVisto", 0):
             busca["pedidoCelularVisto"] = pedido_ts
-            recente = agora_ms() - pedido_ts < PEDIDO_CELULAR_VALIDADE_MS
-            if recente and not busca.get("atual") and any(estado["config"]["lojas"].values()):
-                busca["solicitadoEm"] = agora_ms()  # o Coletor pega no próximo minuto
-                print(f"Busca pedida pelo celular ({time.strftime('%d/%m %H:%M')})")
-            gravar_estado(estado)
+            pedido = {"ts": pedido_ts, "recebidoEm": agora_ms()}
+            if agora_ms() - pedido_ts > PEDIDO_CELULAR_VALIDADE_MS:
+                pedido["erro"] = "Pedido antigo ignorado (o PC estava desligado). Peça de novo."
+            elif not any(estado["config"]["lojas"].values()):
+                pedido["erro"] = "Nenhuma loja marcada em ⚙️ → Onde buscar pedidos (no PC)."
+            elif not busca.get("atual"):
+                busca["solicitadoEm"] = agora_ms()  # o Coletor pega em até 1 min
+            busca["pedidoCelular"] = pedido
+            print(f"Busca pedida pelo celular ({time.strftime('%d/%m %H:%M')})")
+        gravar_estado(estado)
+
+    # 2) Última busca concluída + andamento (um PATCH só, e só quando algo mudou)
+    arquivos = {}
+    ultima = busca.get("ultima")
+    if busca.get("publicar") and ultima:
+        arquivos["busca.json"] = {"content": json.dumps(ultima, ensure_ascii=False)}
+    andamento = montar_andamento(estado)
+    if andamento != _andamento_publicado:
+        arquivos["andamento.json"] = {"content": json.dumps({**andamento, "ts": agora_ms()}, ensure_ascii=False)}
+    if arquivos:
+        gist_request(gist, "PATCH", {"files": arquivos})
+        _andamento_publicado = andamento
+        if "busca.json" in arquivos:
+            with LOCK:
+                estado = ler_estado()
+                if (estado["busca"].get("ultima") or {}).get("fimEm") == ultima.get("fimEm"):
+                    estado["busca"]["publicar"] = False
+                    gravar_estado(estado)
+
+    pedido = busca.get("pedidoCelular") or {}
+    pedido_aberto = (pedido.get("recebidoEm", 0) > (busca.get("ultima") or {}).get("fimEm", 0)
+                     and agora_ms() - pedido.get("recebidoEm", 0) < PEDIDO_CELULAR_VALIDADE_MS)
+    return bool(busca.get("atual") or busca.get("solicitadoEm") or pedido_aberto)
 
 
 def laco_gist():
     while True:
+        ativo = False
         try:
-            sincronizar_gist()
-        except Exception as exc:  # noqa: BLE001 — sem internet, token trocado...: tenta no próximo minuto
+            ativo = sincronizar_gist()
+        except Exception as exc:  # noqa: BLE001 — sem internet, token trocado...: tenta na próxima rodada
             print(f"Gist: {exc}", file=sys.stderr)
-        time.sleep(GIST_INTERVALO_S)
+        time.sleep(GIST_INTERVALO_ATIVO_S if ativo else GIST_INTERVALO_S)
 
 
 class Servidor(ThreadingHTTPServer):
