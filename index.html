@@ -102,19 +102,26 @@
     </form>
   </dialog>
 
-  <!-- Resultado do rastreio (widget 17TRACK) -->
+  <!-- Detalhes do pacote + rastreamento completo (abre ao clicar no card) -->
   <dialog id="dlgTrack" class="dlg-track">
     <div class="track-head">
       <div>
         <h2 id="trackTitle"></h2>
-        <p id="trackCode" class="hint"></p>
+        <p id="trackSub" class="track-sub"></p>
       </div>
       <button type="button" class="icon-btn" data-close aria-label="Fechar">✕</button>
     </div>
-    <div id="trackResult" class="track-result"></div>
+    <div class="track-corpo">
+      <section id="trackDetalhes" class="detalhes" aria-label="Detalhes do pacote"></section>
+      <h3 class="secao">Rastreamento</h3>
+      <div id="trackResult" class="track-result"></div>
+    </div>
     <div class="track-foot">
-      <a id="trackOfficial" class="btn small" target="_blank" rel="noopener">Site da transportadora</a>
-      <button type="button" class="btn small primary" data-close>Fechar</button>
+      <a id="trackOfficial" class="btn small" target="_blank" rel="noopener">↗ Site oficial</a>
+      <div class="row-buttons">
+        <button type="button" id="trackEditar" class="btn small">✏️ Editar</button>
+        <button type="button" class="btn small primary" data-close>Fechar</button>
+      </div>
     </div>
   </dialog>
 

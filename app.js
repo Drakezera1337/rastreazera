@@ -89,34 +89,52 @@ function render() {
   $('#list').innerHTML = list.map(cardHtml).join('');
 }
 
+// Cor de cada plataforma (loja); sem loja informada, usa a transportadora
+const PLATAFORMAS = {
+  shopee: '#ee4d2d', aliexpress: '#ff6a00', olx: '#8b5cf6', 'mercado livre': '#eab308',
+  amazon: '#f59e0b', shein: '#64748b', temu: '#f97316', magalu: '#0086ff',
+};
+
+function plataforma(p) {
+  const carrier = CARRIERS[p.carrier] || CARRIERS.outra;
+  const nome = p.store || carrier.name;
+  return { nome, cor: PLATAFORMAS[nome.toLowerCase()] || (p.store ? '#64748b' : carrier.color) };
+}
+
+function tempoRelativo(ts) {
+  const min = Math.round((Date.now() - ts) / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  if (min < 24 * 60) return `há ${Math.round(min / 60)} h`;
+  const dias = Math.round(min / 1440);
+  return dias < 7 ? `há ${dias} dia${dias === 1 ? '' : 's'}` : fmtDate(ts);
+}
+
+function statusBadge(p) {
+  const s = STATUS[p.status] || STATUS.aguardando;
+  return `<span class="status-badge st-${p.status}">${s.icon} ${s.label}</span>`;
+}
+
 function cardHtml(p) {
   const carrier = CARRIERS[p.carrier] || CARRIERS.outra;
-  const status = STATUS[p.status] || STATUS.aguardando;
-  const age = daysSince(p.createdAt);
-  const eta = p.eta ? `· previsão ${new Date(p.eta + 'T12:00').toLocaleDateString('pt-BR')}` : '';
+  const plat = plataforma(p);
+  const ultima = p.lastEvent
+    ? `<span class="ultima-texto">${esc(p.lastEvent.text)}</span>
+       <time datetime="${new Date(p.lastEvent.time).toISOString()}" title="${fmtDateTime(p.lastEvent.time)}">${tempoRelativo(p.lastEvent.time)}</time>`
+    : '<span class="ultima-texto vazio">Sem atualizações ainda</span>';
+  const nome = esc(p.name || p.code);
   return `
-    <article class="card status-${p.status}" data-id="${p.id}">
-      <div class="card-head">
-        <div>
-          <h3>${esc(p.name || 'Sem nome')}</h3>
-          <p class="meta">
-            <span class="badge" style="--c:${carrier.color}">${esc(carrier.name)}</span>
-            ${p.store ? `<span class="store">${esc(p.store)}</span>` : ''}
-          </p>
-        </div>
-        <select class="status-select" data-action="status" aria-label="Status">
-          ${Object.entries(STATUS).map(([k, s]) => `<option value="${k}" ${k === p.status ? 'selected' : ''}>${s.icon} ${s.label}</option>`).join('')}
-        </select>
+    <article class="card status-${p.status}" data-id="${p.id}" data-action="abrir" tabindex="0" role="button" aria-label="Detalhes de ${nome}">
+      <div class="card-topo">
+        <h3>${nome}</h3>
+        <span class="badge" style="--c:${plat.cor}">${esc(plat.nome)}</span>
       </div>
-      <button class="code" data-action="copy" title="Copiar código">${esc(p.code)} <span aria-hidden="true">⧉</span></button>
-      ${p.lastEvent ? `<p class="last-event">${esc(p.lastEvent.text)}<span>${fmtDateTime(p.lastEvent.time)}</span></p>` : ''}
-      ${p.notes ? `<p class="notes">${esc(p.notes)}</p>` : ''}
-      <p class="dates">Adicionado em ${fmtDate(p.createdAt)} (${age} dia${age === 1 ? '' : 's'}) ${eta}</p>
-      <div class="card-actions">
-        <button class="btn small primary" data-action="track">Ver rastreio</button>
-        <a class="btn small" href="${carrier.url(p.code)}" target="_blank" rel="noopener">Site oficial</a>
-        <button class="btn small ghost" data-action="edit">Editar</button>
-        <button class="btn small ghost danger" data-action="delete">Excluir</button>
+      ${statusBadge(p)}
+      <p class="card-ultima">${ultima}</p>
+      <div class="card-acoes">
+        <a class="acao" href="${carrier.url(p.code)}" target="_blank" rel="noopener" title="Site oficial (${esc(carrier.name)})" aria-label="Abrir no site oficial">↗</a>
+        <button class="acao" data-action="edit" title="Editar" aria-label="Editar ${nome}">✏️</button>
+        <button class="acao perigo" data-action="delete" title="Excluir" aria-label="Excluir ${nome}">🗑️</button>
       </div>
     </article>`;
 }
@@ -243,19 +261,64 @@ function loadWidget() {
   return widgetScript;
 }
 
+// Pacote aberto no modal de detalhes
+let pacoteAberto = null;
+
+function renderDetalhes(p) {
+  const carrier = CARRIERS[p.carrier] || CARRIERS.outra;
+  const plat = plataforma(p);
+  $('#trackTitle').textContent = p.name || p.code;
+  $('#trackSub').innerHTML = `<span class="badge" style="--c:${plat.cor}">${esc(plat.nome)}</span> ${statusBadge(p)}`;
+  $('#trackOfficial').href = carrier.url(p.code);
+  const linha = (rotulo, valor, cheia) => valor ? `<div class="${cheia ? 'cheia' : ''}"><dt>${rotulo}</dt><dd>${valor}</dd></div>` : '';
+  const dias = daysSince(p.createdAt);
+  $('#trackDetalhes').innerHTML = `
+    <dl class="det-grid">
+      ${linha('Código de rastreio', `<button type="button" class="code" data-det="copiar" title="Copiar código">${esc(p.code)} <span aria-hidden="true">⧉</span></button>`)}
+      ${linha('Transportadora', esc(carrier.name))}
+      ${linha('Status', `<select data-det="status" aria-label="Status">${Object.entries(STATUS).map(([k, s]) =>
+        `<option value="${k}" ${k === p.status ? 'selected' : ''}>${s.icon} ${s.label}</option>`).join('')}</select>`)}
+      ${linha('Previsão de entrega', p.eta && new Date(`${p.eta}T12:00`).toLocaleDateString('pt-BR'))}
+      ${linha('Última atualização', p.lastEvent && `${esc(p.lastEvent.text)}<br><small>${fmtDateTime(p.lastEvent.time)} (${tempoRelativo(p.lastEvent.time)})</small>`, true)}
+      ${linha('Observações', p.notes && esc(p.notes).replace(/ · /g, '<br>'), true)}
+      ${linha('Adicionado em', `${fmtDate(p.createdAt)} <small>(${dias} dia${dias === 1 ? '' : 's'})</small>`)}
+    </dl>`;
+}
+
+$('#trackDetalhes').addEventListener('click', async (e) => {
+  if (!e.target.closest('[data-det="copiar"]') || !pacoteAberto) return;
+  try { await navigator.clipboard.writeText(pacoteAberto.code); toast('Código copiado'); }
+  catch { prompt('Copie o código:', pacoteAberto.code); }
+});
+$('#trackDetalhes').addEventListener('change', (e) => {
+  if (e.target.dataset.det !== 'status' || !pacoteAberto) return;
+  pacoteAberto.status = e.target.value;
+  pacoteAberto.updatedAt = Date.now();
+  save();
+  renderDetalhes(pacoteAberto);
+  toast('Status atualizado');
+});
+$('#trackEditar').addEventListener('click', () => {
+  const p = pacoteAberto;
+  dlgTrack.close();
+  if (p) openForm(p);
+});
+dlgTrack.addEventListener('close', () => { pacoteAberto = null; });
+
 async function showTracking(p) {
   const carrier = CARRIERS[p.carrier] || CARRIERS.outra;
-  $('#trackTitle').textContent = p.name || 'Rastreio';
-  $('#trackCode').textContent = `${p.code} · ${carrier.name}`;
-  $('#trackOfficial').href = carrier.url(p.code);
+  pacoteAberto = p;
+  renderDetalhes(p);
   const box = $('#trackResult');
   box.innerHTML = '<p class="empty">Buscando rastreio…</p>';
   box.classList.remove('widget');
-  dlgTrack.showModal();
+  if (!dlgTrack.open) dlgTrack.showModal();
+  $('.track-corpo').scrollTop = 0;
 
   if (Trackers.supports(p.carrier)) {
     try {
       const result = await refreshItem(p);
+      if (pacoteAberto === p) renderDetalhes(p); // a consulta pode ter trazido status/evento novos
       box.innerHTML = timelineHtml(result.events);
     } catch (err) {
       box.innerHTML = `<p class="empty">Não foi possível consultar (${esc(err.message)}).<br>
@@ -296,7 +359,7 @@ async function showWidget(p, carrier) {
     box.classList.add('widget');
     YQV5.trackSingle({
       YQ_ContainerId: 'trackResult',
-      YQ_Height: Math.max(360, box.clientHeight),
+      YQ_Height: 460,
       YQ_Fc: carrier.yq || '0', // '0' = o 17TRACK tenta descobrir a transportadora
       YQ_Lang: 'pt',
       YQ_Num: p.code,
@@ -308,40 +371,33 @@ async function showWidget(p, carrier) {
 }
 
 // ---------- Ações nos cards ----------
-$('#list').addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-action]');
-  if (!btn || btn.dataset.action === 'status') return;
-  const p = state.items.find((x) => x.id === btn.closest('.card').dataset.id);
+// Clicar no corpo do card abre os detalhes; os ícones fazem a ação deles; o ↗ é um link normal
+function excluirPacote(p) {
+  if (!confirm(`Excluir "${p.name || p.code}"?`)) return false;
+  // Mantém só o necessário para a exclusão se propagar na sincronização
+  Object.keys(p).forEach((k) => { if (!['id', 'createdAt'].includes(k)) delete p[k]; });
+  Object.assign(p, { deleted: true, updatedAt: Date.now() });
+  save();
+  toast('Rastreio excluído');
+  return true;
+}
 
-  switch (btn.dataset.action) {
-    case 'copy':
-      try { await navigator.clipboard.writeText(p.code); toast('Código copiado'); }
-      catch { prompt('Copie o código:', p.code); }
-      break;
-    case 'track':
-      showTracking(p);
-      break;
-    case 'edit':
-      openForm(p);
-      break;
-    case 'delete':
-      if (confirm(`Excluir "${p.name || p.code}"?`)) {
-        // Mantém só o necessário para a exclusão se propagar na sincronização
-        Object.keys(p).forEach((k) => { if (!['id', 'createdAt'].includes(k)) delete p[k]; });
-        Object.assign(p, { deleted: true, updatedAt: Date.now() });
-        save();
-        toast('Rastreio excluído');
-      }
-      break;
-  }
+$('#list').addEventListener('click', (e) => {
+  if (e.target.closest('a')) return;
+  const alvo = e.target.closest('[data-action]');
+  const card = e.target.closest('.card');
+  if (!alvo || !card) return;
+  const p = state.items.find((x) => x.id === card.dataset.id);
+  if (alvo.dataset.action === 'edit') openForm(p);
+  else if (alvo.dataset.action === 'delete') excluirPacote(p);
+  else if (alvo.dataset.action === 'abrir') showTracking(p);
 });
 
-$('#list').addEventListener('change', (e) => {
-  if (e.target.dataset.action !== 'status') return;
-  const p = state.items.find((x) => x.id === e.target.closest('.card').dataset.id);
-  p.status = e.target.value;
-  p.updatedAt = Date.now();
-  save();
+$('#list').addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('card')) {
+    e.preventDefault();
+    showTracking(state.items.find((x) => x.id === e.target.dataset.id));
+  }
 });
 
 // ---------- Busca e filtros ----------
