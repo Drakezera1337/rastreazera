@@ -1,5 +1,5 @@
-﻿// Cache simples para o app abrir rápido e funcionar offline (os dados ficam no localStorage).
-const CACHE = 'rastreazera-v19';
+// Cache simples para o app abrir rápido e funcionar offline (os dados ficam no localStorage).
+const CACHE = 'rastreazera-v20';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'carriers.js', 'sync.js', 'trackers.js', 'coletor/coletores.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -29,6 +29,7 @@ self.addEventListener('fetch', (e) => {
         caches.open(CACHE).then((c) => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request))
+      // Offline: ignora o ?v= (o cache da instalação guarda os arquivos sem ele)
+      .catch(() => caches.match(e.request).then((r) => r || caches.match(e.request, { ignoreSearch: true })))
   );
 });

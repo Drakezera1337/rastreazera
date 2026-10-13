@@ -1251,6 +1251,18 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { sy
 // Busca pedida pelo celular ainda em andamento (app foi fechado e reaberto)
 acompanharBuscaRemota();
 
+// Modo offline + atualização automática: ao voltar para o app (no celular ele costuma ser retomado
+// da memória, sem recarregar), confere se há versão nova; quando ela assume, recarrega uma vez.
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  const jaTinhaControle = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!jaTinhaControle || recarregou) return; // primeira instalação: a página já está atualizada
+    recarregou = true;
+    location.reload();
+  });
 }
+$('#versaoApp').textContent = `Rastreazera · versão ${RZ_VERSAO}`;

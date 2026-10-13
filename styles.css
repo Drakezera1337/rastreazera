@@ -319,3 +319,5 @@ dialog label.check input { width: 18px; height: 18px; margin: 0; accent-color: v
 .andamento-lista time { color: var(--muted); font-size: 0.78rem; }
 .passo-erro { color: var(--danger); }
 .passo-aviso { color: #d97706; }
+
+.versao { margin-right: auto; align-self: center; font-size: 0.75rem; color: var(--muted); }
