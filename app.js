@@ -61,12 +61,24 @@ function matchesQuery(p) {
   return [p.name, p.code, p.store, p.notes, CARRIERS[p.carrier]?.name].some((v) => String(v || '').toLowerCase().includes(q));
 }
 
+// Ordenação escolhida no seletor "Ordenar" (guardada neste aparelho)
+const ORDEM_KEY = 'rastreazera:ordem';
+const porNome = (a, b) => (a.name || a.code).localeCompare(b.name || b.code, 'pt-BR', { sensitivity: 'base', numeric: true });
+const ultimaAtualizacao = (p) => p.lastEvent?.time || p.updatedAt || p.createdAt;
+const ORDENS = {
+  recente: (a, b) => ultimaAtualizacao(b) - ultimaAtualizacao(a),
+  nome: porNome,
+  plataforma: (a, b) => plataforma(a).nome.localeCompare(plataforma(b).nome, 'pt-BR', { sensitivity: 'base' }) || porNome(a, b),
+};
+state.ordem = (() => { try { return localStorage.getItem(ORDEM_KEY); } catch { return null; } })();
+if (!ORDENS[state.ordem]) state.ordem = 'recente';
+
 function render() {
   const all = visibleItems();
   const list = all
     .filter(matchesFilter)
     .filter(matchesQuery)
-    .sort((a, b) => (a.status === 'entregue') - (b.status === 'entregue') || b.createdAt - a.createdAt);
+    .sort((a, b) => (a.status === 'entregue') - (b.status === 'entregue') || ORDENS[state.ordem](a, b));
 
   const ativos = all.filter((p) => p.status !== 'entregue').length;
   $('#stats').innerHTML = all.length
@@ -402,6 +414,12 @@ $('#list').addEventListener('keydown', (e) => {
 
 // ---------- Busca e filtros ----------
 $('#search').addEventListener('input', (e) => { state.query = e.target.value.trim(); render(); });
+$('#ordem').value = state.ordem;
+$('#ordem').addEventListener('change', (e) => {
+  state.ordem = e.target.value;
+  try { localStorage.setItem(ORDEM_KEY, state.ordem); } catch { /* sem storage: vale só nesta sessão */ }
+  render();
+});
 $('#filters').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
   if (!chip) return;

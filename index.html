@@ -9,7 +9,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=20">
+  <link rel="stylesheet" href="styles.css?v=21">
 </head>
 <body>
   <header class="topbar">
@@ -53,7 +53,16 @@
       </div>
       <ol id="andamentoLista" class="andamento-lista"></ol>
     </section>
-    <section id="stats" class="stats"></section>
+    <div class="barra-lista">
+      <section id="stats" class="stats"></section>
+      <label class="ordem">Ordenar
+        <select id="ordem">
+          <option value="recente">Atualização mais recente</option>
+          <option value="nome">Nome (A–Z)</option>
+          <option value="plataforma">Plataforma</option>
+        </select>
+      </label>
+    </div>
     <section id="list" class="list" aria-live="polite"></section>
   </main>
 
@@ -221,10 +230,10 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="config.js?v=20"></script>
-  <script src="carriers.js?v=20"></script>
-  <script src="sync.js?v=20"></script>
-  <script src="trackers.js?v=20"></script>
-  <script src="app.js?v=20"></script>
+  <script src="config.js?v=21"></script>
+  <script src="carriers.js?v=21"></script>
+  <script src="sync.js?v=21"></script>
+  <script src="trackers.js?v=21"></script>
+  <script src="app.js?v=21"></script>
 </body>
 </html>

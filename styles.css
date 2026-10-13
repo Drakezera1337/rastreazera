@@ -81,7 +81,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 }
 .chip.active { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
 
-.stats { display: flex; gap: 16px; color: var(--muted); font-size: 0.9rem; margin: 14px 2px 8px; }
+.barra-lista { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 2px 8px; }
+.stats { display: flex; gap: 16px; color: var(--muted); font-size: 0.9rem; }
+.ordem { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--muted); margin-left: auto; }
+.ordem select { width: auto; padding: 6px 10px; font-size: 0.85rem; }
 .stats strong { color: var(--text); }
 
 /* ----- Cards ----- */
