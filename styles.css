@@ -256,3 +256,7 @@ dialog label.check input { width: 18px; height: 18px; margin: 0; accent-color: v
 /* ----- QR code do celular ----- */
 .qr { display: grid; justify-items: center; gap: 8px; }
 #qrCodigo { background: #fff; padding: 12px; border-radius: 12px; line-height: 0; }
+
+/* ----- Leitor de QR (celular) ----- */
+.leitor-qr { display: grid; justify-items: center; gap: 8px; }
+.leitor-qr video { width: 100%; max-width: 320px; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: #000; }

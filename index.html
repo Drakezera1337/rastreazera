@@ -144,8 +144,17 @@
       <h3>Usar no celular</h3>
       <p class="hint">Com a sincronização ligada, mostre um QR code e aponte a câmera do celular: o site abre já configurado (mesmos pacotes, de qualquer lugar).</p>
       <div class="row-buttons">
-        <button type="button" id="btnQrCelular" class="btn">📱 Configurar celular</button>
+        <button type="button" id="btnQrCelular" class="btn">📱 Mostrar QR (no PC)</button>
+        <button type="button" id="btnLerQr" class="btn primary">📷 Ler QR do PC (no celular)</button>
       </div>
+      <div id="leitorQr" class="leitor-qr" hidden>
+        <video id="videoQr" playsinline muted></video>
+        <p class="hint">Aponte para o QR code que aparece no PC em ⚙️ → Mostrar QR.</p>
+        <button type="button" id="btnPararQr" class="btn ghost">Cancelar</button>
+      </div>
+      <label>Ou cole o link de configuração
+        <input id="linkConfig" type="url" autocomplete="off" placeholder="https://drakezera1337.github.io/rastreazera/#config=…">
+      </label>
       <div id="qrCelular" class="qr" hidden>
         <div id="qrCodigo"></div>
         <p class="hint">O QR contém o seu token do GitHub: não compartilhe nem tire print dele. Some ao fechar.</p>

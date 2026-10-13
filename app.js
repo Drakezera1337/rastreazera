@@ -79,7 +79,9 @@ function render() {
       : `<div class="empty">
            <p class="empty-big">📦</p>
            <p>Nenhum rastreio ainda.</p>
-           <p>Toque em <strong>＋</strong> e cole o código de rastreio.</p>
+           ${!Sync.enabled() && !TEM_SERVIDOR
+             ? '<p>Seus pacotes estão no PC? Toque em <strong>⚙️</strong> → <strong>📷 Ler QR do PC</strong>.</p>'
+             : '<p>Toque em <strong>＋</strong> e cole o código de rastreio.</p>'}
          </div>`;
     return;
   }
@@ -536,19 +538,103 @@ $('#btnQrCelular').addEventListener('click', async () => {
 });
 $('#dlgSettings').addEventListener('close', () => { $('#qrCelular').hidden = true; $('#qrCodigo').innerHTML = ''; });
 
-function importarConfigDoHash() {
-  const match = location.hash.match(/^#config=([\w-]+)$/);
-  if (!match) return;
-  history.replaceState(null, '', location.pathname + location.search);
+// Aceita o link inteiro (https://…#config=…) ou só o trecho #config=…; devolve true se configurou
+function aplicarLinkConfig(texto) {
+  const match = String(texto || '').match(/#config=([\w-]+)/);
+  if (!match) return false;
   try {
     const { token, gistId } = JSON.parse(deBase64url(match[1]));
     if (!token || !gistId) throw new Error();
     Sync.setConfig({ token, gistId });
     toast('Celular configurado — sincronizando…');
+    return true;
   } catch {
     toast('Link de configuração inválido');
+    return false;
   }
 }
+
+function importarConfigDoHash() {
+  if (!location.hash.startsWith('#config=')) return;
+  const hash = location.hash;
+  history.replaceState(null, '', location.pathname + location.search);
+  aplicarLinkConfig(hash);
+}
+
+async function configurarPorLink(texto) {
+  if (!aplicarLinkConfig(texto)) return;
+  dlgSettings.close();
+  await syncNow();
+}
+
+$('#linkConfig').addEventListener('change', (e) => {
+  configurarPorLink(e.target.value);
+  e.target.value = '';
+});
+
+// Leitor de QR dentro do app: no iPhone, o app da tela de início não enxerga o que foi
+// configurado no Safari — então o próprio app lê o QR do PC com a câmera.
+let leitorStream = null;
+let jsQrScript;
+
+function pararLeitorQr() {
+  leitorStream?.getTracks().forEach((t) => t.stop());
+  leitorStream = null;
+  $('#leitorQr').hidden = true;
+}
+
+$('#btnLerQr').addEventListener('click', async () => {
+  const video = $('#videoQr');
+  try {
+    leitorStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  } catch {
+    return toast('Sem acesso à câmera — permita nas configurações do navegador ou cole o link abaixo');
+  }
+  video.srcObject = leitorStream;
+  $('#leitorQr').hidden = false;
+  await video.play().catch(() => {});
+
+  // Leitor nativo (Chrome/Android) ou jsQR (Safari/iPhone)
+  let ler;
+  if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats?.())?.includes('qr_code')) {
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    ler = async () => (await detector.detect(video))[0]?.rawValue;
+  } else {
+    try {
+      jsQrScript ??= new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+        s.onload = resolve;
+        s.onerror = () => { jsQrScript = null; reject(new Error()); };
+        document.head.appendChild(s);
+      });
+      await jsQrScript;
+    } catch {
+      pararLeitorQr();
+      return toast('Não foi possível carregar o leitor de QR — cole o link abaixo');
+    }
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ler = async () => {
+      if (!video.videoWidth) return null;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      return jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height)?.data;
+    };
+  }
+
+  while (leitorStream) {
+    const texto = await ler().catch(() => null);
+    if (texto?.includes('#config=')) {
+      pararLeitorQr();
+      return configurarPorLink(texto);
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+});
+$('#btnPararQr').addEventListener('click', pararLeitorQr);
+$('#dlgSettings').addEventListener('close', pararLeitorQr);
 
 // ---------- Busca pedida pelo celular (sem server.py): o PC recebe pelo Gist ----------
 const PEDIDO_REMOTO_KEY = 'rastreazera:pedidoRemoto';
