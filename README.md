@@ -81,6 +81,16 @@ O sininho no topo guarda o histórico (últimas 100) e mostra quantas são novas
   e o favorito geram o resumo da loja que buscaram. Falhas aparecem no lugar ("OLX: extensão não respondeu").
 - **Mudança de status** detectada na consulta automática (Shopee Xpress), ex.: "PS5: 📍 Saiu para entrega".
 
+### Notificações no celular (push)
+
+Em ⚙️ → **🔔 Ativar notificações**, o aparelho se inscreve (fica em `push.json` no Gist). Ao fim de cada
+busca, o `server.py` compara com a anterior e envia: pedido novo, movimentação nova, pedido que saiu dos
+ativos (provavelmente entregue). **Enviar teste** confirma em até 1 min. Precisa do PC ligado.
+iPhone: iOS 16.4+ e o app aberto pela tela de início.
+
+Configuração no PC (fora do git): chave privada VAPID em `push_vapid.pem` e a biblioteca em `.vendor/`
+(`python -m pip install --target .vendor pywebpush`). A chave pública fica em `config.js`.
+
 ## Pedidos da OLX (extensão OLX Dashboard)
 
 O botão **🔄 Buscar pedidos** (e o agente `/importar-pedidos`) roda a **Verificação Completa** da extensão
