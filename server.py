@@ -129,6 +129,7 @@ def atualizar_prazos(estado):
 # Aqui ficam os anúncios das cidades escolhidas (config.cidades; vazio = todas), com quando apareceram
 # e mudanças de preço. Os novos vão para pendentesPush; laco_gist publica fb.json e avisa (push_fb.json).
 FB_FILE = ROOT / "fb_estado.json"
+FB_DIR = ROOT.parent / "fb-radar"  # repositório do FB Radar (servido em /fb/)
 FB_GUARDAR_MS = 7 * 24 * 3600 * 1000  # anúncio some do painel 7 dias depois da última vez que apareceu
 FB_MAX = 400
 FB_PUBLICAR_MAX = 300
@@ -189,6 +190,7 @@ def fb_publico(fb):
         "agenda": {"ativo": agenda.get("ativo", False), "intervalo": agenda.get("intervalo"),
                    "proxima": agenda.get("proxima"), "em": agenda.get("em")},
         "cidades": fb["config"]["cidades"],
+        "gistConfigurado": bool((fb.get("segredos") or {}).get("gist")),
     }
 
 
@@ -239,11 +241,16 @@ def aplicar_fb(acao, dados, fb):
     elif acao == "agenda":
         fb["agenda"] = {"ativo": bool(dados.get("ativo")), "intervalo": int(dados.get("intervalo") or 0) or None,
                         "proxima": int(dados["proxima"]) if dados.get("proxima") else None, "em": agora}
-    elif acao == "config":  # cidades, pelo ⚙️ do FB Radar no PC
+    elif acao == "config":  # cidades e Gist próprio, pelo ⚙️ do FB Radar no PC
         cidades = dados.get("cidades")
         if isinstance(cidades, list):
             fb["config"]["cidades"] = [str(c).strip()[:60] for c in cidades if str(c).strip()][:30]
             fb["publicar"] = True
+        gist = dados.get("gist")
+        if isinstance(gist, dict) and re.fullmatch(r"[\w-]{20,255}", str(gist.get("token", ""))) \
+                and re.fullmatch(r"[0-9a-f]{20,40}", str(gist.get("gistId", ""))):
+            fb.setdefault("segredos", {})["gist"] = {"token": gist["token"], "gistId": gist["gistId"]}
+            fb["publicar"] = True  # manda os anúncios já guardados para o Gist novo
     else:
         return False
     return True
@@ -252,6 +259,17 @@ def aplicar_fb(acao, dados, fb):
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
+
+    # /fb/ é o FB Radar, que fica no repositório próprio (pasta fb-radar ao lado desta)
+    def translate_path(self, path):
+        if path == "/fb" or path.startswith(("/fb/", "/fb?")):
+            original = self.directory
+            self.directory = str(FB_DIR)
+            try:
+                return super().translate_path(path[3:] or "/")
+            finally:
+                self.directory = original
+        return super().translate_path(path)
 
     # ---------- GET ----------
     def do_GET(self):
@@ -562,11 +580,6 @@ def sincronizar_gist():
     except Exception as exc:  # noqa: BLE001 — notificação nunca derruba a sincronização
         print(f"Notificações: {exc}", file=sys.stderr)
 
-    try:
-        processar_fb(gist, arquivos_gist)
-    except Exception as exc:  # noqa: BLE001
-        print(f"FB Radar: {exc}", file=sys.stderr)
-
     pedido = busca.get("pedidoCelular") or {}
     pedido_aberto = (pedido.get("recebidoEm", 0) > (busca.get("ultima") or {}).get("fimEm", 0)
                      and agora_ms() - pedido.get("recebidoEm", 0) < PEDIDO_CELULAR_VALIDADE_MS)
@@ -727,8 +740,24 @@ def fb_texto(a):
     return f"{a.get('titulo', '')[:60]} · {preco} · {a.get('cidade', '')}"
 
 
+FB_SINC_INTERVALO_MS = 50 * 1000
+_fb_sinc_em = 0
+
+
+def sincronizar_fb():
+    """Uma rodada no Gist próprio do FB Radar (no máximo a cada ~1 min)."""
+    global _fb_sinc_em
+    if agora_ms() - _fb_sinc_em < FB_SINC_INTERVALO_MS:
+        return
+    _fb_sinc_em = agora_ms()
+    with LOCK:
+        gist = (ler_fb().get("segredos") or {}).get("gist")
+    if gist:
+        processar_fb(gist, gist_request(gist).get("files") or {})
+
+
 def processar_fb(gist, arquivos_gist):
-    """Publica fb.json quando muda (ou a cada 15 min) e avisa os aparelhos de push_fb.json dos anúncios novos."""
+    """Publica fb.json quando muda (ou a cada 15 min) e avisa os aparelhos de push.json dos anúncios novos."""
     with LOCK:
         fb = ler_fb()
         pendentes = fb.pop("pendentesPush", [])
@@ -742,7 +771,7 @@ def processar_fb(gist, arquivos_gist):
 
     if not PUSH_PEM.exists():
         return
-    inscricoes = [i for i in json_do_arquivo(arquivos_gist, "push_fb.json", []) if isinstance(i, dict) and i.get("endpoint")]
+    inscricoes = [i for i in json_do_arquivo(arquivos_gist, "push.json", []) if isinstance(i, dict) and i.get("endpoint")]
     mortos = []
     testes = fb.get("testesPush", {})
     for insc in inscricoes:
@@ -768,7 +797,7 @@ def processar_fb(gist, arquivos_gist):
         gravar_fb(fb_atual)
     if mortos:
         vivos = [i for i in inscricoes if i["endpoint"] not in set(mortos)]
-        gist_request(gist, "PATCH", {"files": {"push_fb.json": {"content": json.dumps(vivos, indent=1)}}})
+        gist_request(gist, "PATCH", {"files": {"push.json": {"content": json.dumps(vivos, indent=1)}}})
 
 
 def laco_gist():
@@ -778,6 +807,10 @@ def laco_gist():
             ativo = sincronizar_gist()
         except Exception as exc:  # noqa: BLE001 — sem internet, token trocado...: tenta na próxima rodada
             print(f"Gist: {exc}", file=sys.stderr)
+        try:
+            sincronizar_fb()
+        except Exception as exc:  # noqa: BLE001
+            print(f"FB Radar: {exc}", file=sys.stderr)
         time.sleep(GIST_INTERVALO_ATIVO_S if ativo else GIST_INTERVALO_S)
 
 
