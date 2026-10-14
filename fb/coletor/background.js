@@ -85,6 +85,7 @@ async function coletar() {
   let anuncios = [];
   let metodo = 'página';
   let erro = '';
+  let aviso = ''; // páginas seguintes falharam (a primeira veio): segue só com ela e mostra o motivo
   try {
     const pagina = await coletarPorRequisicao();
     anuncios = pagina.anuncios;
@@ -93,6 +94,7 @@ async function coletar() {
       const profunda = Date.now() - ultimaProfunda > PROFUNDA_A_CADA_MS;
       const extras = await paginasSeguintes(pagina, profunda ? PAGINAS_PROFUNDA : PAGINAS_RAPIDA).catch((e) => {
         console.warn('[FB Radar] páginas seguintes:', e);
+        aviso = `só a 1ª página: ${e.message}`.slice(0, 240);
         return [];
       });
       const vistos = new Set(anuncios.map((a) => a.id));
@@ -108,9 +110,9 @@ async function coletar() {
     erro = e.message || String(e);
   }
 
-  const ultima = { em: Date.now(), n: anuncios.length, erro, metodo };
+  const ultima = { em: Date.now(), n: anuncios.length, erro, metodo, aviso };
   await chrome.storage.local.set({ ultima, emAndamento: 0 });
-  await api('/api/fb/coleta', { anuncios, erro, metodo }).catch((e) => {
+  await api('/api/fb/coleta', { anuncios, erro, metodo, aviso }).catch((e) => {
     chrome.storage.local.set({ ultima: { ...ultima, erro: `server.py não respondeu (${e.message})` } });
   });
   await reportarAgenda();
@@ -135,9 +137,11 @@ async function paginasSeguintes({ html, cursor }, quantas) {
   const lsd = /"LSD",\[\],\{"token":"([^"]+)"/.exec(html)?.[1] || '';
   const usuario = /"USER_ID":"(\d+)"/.exec(html)?.[1];
   const inicioParams = html.indexOf('"params":{"bqf"');
-  if (!cursor || !dtsg || !usuario || inicioParams < 0) return [];
+  const falta = [!cursor && 'cursor', !dtsg && 'token', !usuario && 'usuário', inicioParams < 0 && 'parâmetros'].filter(Boolean);
+  if (falta.length) throw new Error(`a página não trouxe: ${falta.join(', ')}`);
   const params = JSON.parse(objetoEm(html, inicioParams + '"params":'.length));
 
+  await liberarOrigem();
   let docId = (await chrome.storage.local.get('docId')).docId || await descobrirDocId(html);
   let redescobriu = false;
   const todos = [];
@@ -154,13 +158,15 @@ async function paginasSeguintes({ html, cursor }, quantas) {
       method: 'POST', credentials: 'include', body: corpo,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
-    const objetos = (await res.text()).split('\n').map((linha) => {
+    const texto = await res.text();
+    const objetos = texto.split('\n').map((linha) => {
       try { return JSON.parse(linha.replace(/^for \(;;\);/, '')); } catch { return null; }
     }).filter(Boolean);
     const lote = extrairDe(objetos);
     if (!lote.length) {
+      if (p > 0) break; // acabaram as páginas
       // O Facebook pode ter trocado o id da consulta: descobre o novo uma vez e tenta de novo
-      if (redescobriu || p > 0) break;
+      if (redescobriu) throw new Error(`Facebook recusou (${res.status}): ${texto.replace(/\s+/g, ' ').slice(0, 160)}`);
       redescobriu = true;
       await chrome.storage.local.remove('docId');
       docId = await descobrirDocId(html);
@@ -174,6 +180,31 @@ async function paginasSeguintes({ html, cursor }, quantas) {
     await new Promise((r) => setTimeout(r, 800 + Math.random() * 700)); // sem pressa entre páginas
   }
   return todos;
+}
+
+// Pedidos que saem da extensão levam Origin chrome-extension://…, e o Facebook recusa pedidos de
+// dados de outra origem. Esta regra (só para os pedidos desta extensão à API do Facebook) faz
+// eles saírem como se viessem da própria página da categoria, igual à rolagem.
+async function liberarOrigem() {
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [1],
+    addRules: [{
+      id: 1,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [
+          { header: 'origin', operation: 'set', value: 'https://www.facebook.com' },
+          { header: 'referer', operation: 'set', value: URL_CATEGORIA },
+        ],
+      },
+      condition: {
+        urlFilter: '||www.facebook.com/api/graphql/',
+        initiatorDomains: [chrome.runtime.id],
+        resourceTypes: ['xmlhttprequest'],
+      },
+    }],
+  });
 }
 
 // O id da consulta fica num dos arquivos JS do Facebook listados na página: procura até achar

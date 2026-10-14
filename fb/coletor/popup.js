@@ -21,7 +21,7 @@ function render(e) {
   $('ultima').className = u?.erro ? 'erro' : '';
   $('ultima').textContent = !u ? 'Nenhuma conferência feita ainda.'
     : u.erro ? `Última (${hora(u.em)}): ${u.erro}`
-      : `Última (${hora(u.em)}): ${u.n} anúncios lidos`;
+      : `Última (${hora(u.em)}): ${u.n} anúncios lidos (${u.metodo})${u.aviso ? ` — ⚠️ ${u.aviso}` : ''}`;
   $('proxima').textContent = e.ativo && e.proxima ? `Próxima: ${hora(e.proxima)}` : '';
 }
 

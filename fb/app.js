@@ -227,7 +227,8 @@ function statusColeta() {
   }
   if (coleta.erro) return { texto: `⚠️ ${coleta.erro}`, alerta: true, aviso: `Última conferência (${hora(coleta.em)}): ${coleta.erro}` };
   const prox = agenda.proxima && agenda.proxima > Date.now() ? ` · próxima ${hora(agenda.proxima)}` : '';
-  return { texto: `Conferido às ${hora(coleta.em)}${prox}`, alerta: false };
+  const aviso = coleta.aviso ? `Aviso do coletor: está lendo ${coleta.aviso}` : '';
+  return { texto: `Conferido às ${hora(coleta.em)}${prox}`, alerta: false, aviso };
 }
 
 function render() {

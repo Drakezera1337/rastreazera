@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "FB Radar Coletor",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Confere a categoria Consoles de Video Game do Facebook Marketplace a cada poucos minutos e envia os anúncios para o FB Radar (server.py em localhost:5500).",
-  "permissions": ["alarms", "scripting", "tabs", "storage"],
+  "permissions": ["alarms", "scripting", "tabs", "storage", "declarativeNetRequestWithHostAccess"],
   "host_permissions": [
     "https://www.facebook.com/*",
     "https://static.xx.fbcdn.net/*",

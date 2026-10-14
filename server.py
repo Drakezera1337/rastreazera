@@ -198,6 +198,8 @@ def aplicar_fb(acao, dados, fb):
         coleta = {"em": agora, "metodo": str(dados.get("metodo", ""))[:20]}
         if dados.get("erro"):
             coleta["erro"] = str(dados["erro"])[:200]
+        if dados.get("aviso"):  # páginas seguintes falharam: veio só a primeira
+            coleta["aviso"] = str(dados["aviso"])[:240]
         cidades = {sem_acento(c) for c in fb["config"]["cidades"]}
         novos, mudou = 0, False
         coleta_anterior = (fb.get("coleta") or {}).get("em") or 0
