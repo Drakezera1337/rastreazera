@@ -131,7 +131,8 @@ def atualizar_prazos(estado):
 FB_FILE = ROOT / "fb_estado.json"
 FB_GUARDAR_MS = 7 * 24 * 3600 * 1000  # anúncio some do painel 7 dias depois da última vez que apareceu
 FB_MAX = 400
-FB_PUBLICAR_MAX = 200
+FB_PUBLICAR_MAX = 300
+FB_AVISAR_ATRASO_MS = 30 * 60 * 1000  # anúncio criado antes da coleta anterior (achado na varredura completa) não avisa
 
 
 def ler_fb():
@@ -199,6 +200,7 @@ def aplicar_fb(acao, dados, fb):
             coleta["erro"] = str(dados["erro"])[:200]
         cidades = {sem_acento(c) for c in fb["config"]["cidades"]}
         novos, mudou = 0, False
+        coleta_anterior = (fb.get("coleta") or {}).get("em") or 0
         ja_vistos = [(titulo_base(x), x.get("preco") or 0) for x in fb["anuncios"].values()]
         for a in dados.get("anuncios") or []:
             if not isinstance(a, dict) or not re.fullmatch(r"\d{5,25}", str(a.get("id", ""))):
@@ -212,7 +214,8 @@ def aplicar_fb(acao, dados, fb):
                 fb["anuncios"][a["id"]] = {"id": a["id"], **campos, "vistoEm": agora, "ultimaVez": agora}
                 novos += 1
                 # A primeira coleta só preenche o painel; repost de anúncio já visto também não avisa
-                if fb.get("base") and not e_repost(a, ja_vistos):
+                recente = not a.get("criadoEm") or a["criadoEm"] > coleta_anterior - FB_AVISAR_ATRASO_MS
+                if fb.get("base") and recente and not e_repost(a, ja_vistos):
                     fb.setdefault("pendentesPush", []).append(a["id"])
                 ja_vistos.append((titulo_base(a), a.get("preco") or 0))
                 mudou = True

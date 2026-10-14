@@ -104,7 +104,6 @@ a { color: var(--accent); }
   display: grid; gap: 12px; padding: 0 16px; max-width: 1200px; margin: 0 auto;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 }
-@media (max-width: 480px) { .grade { grid-template-columns: repeat(2, 1fr); gap: 10px; } }
 .card {
   position: relative; display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
@@ -124,7 +123,7 @@ a { color: var(--accent); }
 }
 .selo.novo { background: var(--novo); color: #04210f; }
 .selo.baixou { background: var(--baixou); color: #fff; }
-.acoes { position: absolute; top: 6px; right: 6px; display: flex; flex-direction: column; gap: 4px; }
+.acoes { position: absolute; top: 6px; right: 6px; display: flex; flex-direction: column; gap: 4px; z-index: 1; }
 .acoes button {
   width: 32px; height: 32px; border-radius: 50%; border: 0; cursor: pointer;
   background: rgb(0 0 0 / 0.55); color: #fff; font-size: 0.95rem; line-height: 1;
@@ -138,6 +137,22 @@ a { color: var(--accent); }
   min-height: 2.5em;
 }
 .meta { font-size: 0.76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ----- Celular: lista (foto pequena à esquerda, dados à direita) ----- */
+@media (max-width: 600px) {
+  .grade { grid-template-columns: 1fr; gap: 8px; padding: 0 12px; }
+  .card { flex-direction: row; border-radius: 12px; }
+  .card:hover { transform: none; }
+  .foto { flex: none; width: 108px; aspect-ratio: auto; min-height: 108px; }
+  .foto img { position: absolute; inset: 0; }
+  .selos { top: 6px; left: 6px; }
+  .selo { font-size: 0.64rem; padding: 2px 5px; }
+  .info { flex: 1; min-width: 0; padding: 10px 46px 10px 12px; align-content: center; }
+  .titulo { min-height: 0; }
+  .acoes { top: 50%; transform: translateY(-50%); right: 8px; }
+  .acoes button { background: var(--surface-2); color: var(--text); }
+  .acoes button.marcado { background: var(--accent); color: var(--accent-text); }
+}
 
 .vazio { text-align: center; color: var(--muted); padding: 48px 24px; max-width: 520px; margin: 0 auto; }
 .vazio .grande { font-size: 2.6rem; display: block; margin-bottom: 8px; }

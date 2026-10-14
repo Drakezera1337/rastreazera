@@ -185,7 +185,9 @@ function renderChips(grupos) {
 }
 
 function cardHtml(a) {
-  const novo = a.primeiroVisto > marcoNovo;
+  // NOVO: apareceu depois da última visita e foi criado há pouco (a varredura completa também
+  // acha anúncios antigos que ainda não estavam aqui — esses não são novidade)
+  const novo = a.primeiroVisto > marcoNovo && (a.criadoEm || a.primeiroVisto) > marcoNovo - 2 * 3600000;
   const baixou = a.precoAnterior && a.preco && a.preco < a.precoAnterior;
   const selos = [
     novo ? '<span class="selo novo">NOVO</span>' : '',
@@ -200,10 +202,10 @@ function cardHtml(a) {
       <div class="foto">
         ${a.foto ? `<img src="${esc(a.foto)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'sem-foto',textContent:'🎮'}))">` : '<div class="sem-foto">🎮</div>'}
         <div class="selos">${selos}</div>
-        <div class="acoes">
-          <button type="button" data-acao="favorito" class="${fav ? 'marcado' : ''}" title="${fav ? 'Tirar dos salvos' : 'Salvar'}" aria-label="Salvar">${fav ? '★' : '☆'}</button>
-          <button type="button" data-acao="ocultar" title="${oculto ? 'Mostrar de novo' : 'Ocultar'}" aria-label="Ocultar">${oculto ? '↩' : '✕'}</button>
-        </div>
+      </div>
+      <div class="acoes">
+        <button type="button" data-acao="favorito" class="${fav ? 'marcado' : ''}" title="${fav ? 'Tirar dos salvos' : 'Salvar'}" aria-label="Salvar">${fav ? '★' : '☆'}</button>
+        <button type="button" data-acao="ocultar" title="${oculto ? 'Mostrar de novo' : 'Ocultar'}" aria-label="Ocultar">${oculto ? '↩' : '✕'}</button>
       </div>
       <div class="info">
         <div class="preco">${esc(preco)}${baixou ? `<s>${esc(moeda(a.precoAnterior))}</s>` : ''}</div>
@@ -243,7 +245,8 @@ function render() {
   const html = lista.map(cardHtml).join('');
   if (html !== htmlGrade) { $('#lista').innerHTML = html; htmlGrade = html; }
   const total = grupos.length;
-  const novos = grupos.filter((a) => a.primeiroVisto > marcoNovo && !a.oculto).length;
+  const novos = grupos.filter((a) => !a.oculto && a.primeiroVisto > marcoNovo
+    && (a.criadoEm || a.primeiroVisto) > marcoNovo - 2 * 3600000).length;
   const nCidades = dados?.cidades?.length || 0;
   const cidades = nCidades ? (nCidades === 1 ? dados.cidades[0] : `${nCidades} cidades`) : 'todas as cidades';
   $('#resumo').title = nCidades ? dados.cidades.join(', ') : '';

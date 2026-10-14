@@ -117,6 +117,10 @@ no PC e `…/rastreazera/fb/` no GitHub Pages.
   **▶ Iniciar** confere a categoria (ordenada pelos mais novos) a cada 3 min (2–15, ajustável). Ela baixa a página
   e lê os dados que a própria página traz (id, título, preço, cidade, foto, quando foi criado) — sem depender do
   selo "Acabou de ser anunciado" e sem abrir aba (se a página vier sem os dados, abre uma em segundo plano e fecha).
+  Depois pede as páginas seguintes como a rolagem faz: +1 página (~24 anúncios) a cada conferência e uma varredura
+  de até 8 páginas a cada 30 min (para nos anúncios com mais de 7 dias). O id dessa consulta do Facebook é
+  descoberto sozinho nos arquivos JS da página quando muda. Anúncios antigos achados na varredura não geram aviso.
+- **Reposts**: mesmo preço e título igual (ou com até 2 letras de diferença) viram um card só, com o selo ×N.
 - **server.py** guarda os anúncios das cidades escolhidas em `fb_estado.json` (fora do git) por 7 dias,
   marca mudança de preço e publica `fb.json` no mesmo Gist do Rastreazera.
 - **App**: fotos, preço, cidade e há quanto tempo; selo **NOVO** (chegou depois da sua última visita) e
