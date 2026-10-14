@@ -1,5 +1,5 @@
 // Cache simples para o app abrir rápido e funcionar offline (os dados ficam no localStorage).
-const CACHE = 'rastreazera-v26';
+const CACHE = 'rastreazera-v27';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'carriers.js', 'sync.js', 'trackers.js', 'coletor/coletores.js',
   'icon.svg', 'icon-192.png', 'badge-96.png', 'manifest.webmanifest'];
 
@@ -41,11 +41,6 @@ self.addEventListener('push', (e) => {
   let dados = {};
   try { dados = e.data ? e.data.json() : {}; } catch { dados = { body: e.data && e.data.text() }; }
   e.waitUntil(mostrarNotificacao(dados));
-});
-
-// O app (aberto em segundo plano) também pede notificações: mudança de status detectada na hora
-self.addEventListener('message', (e) => {
-  if (e.data && e.data.tipo === 'notificar') e.waitUntil(mostrarNotificacao(e.data));
 });
 
 function mostrarNotificacao({ title, body, tag }) {

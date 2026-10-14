@@ -234,8 +234,9 @@ async function refreshItem(p) {
   const last = result.events[0];
   if (p.status !== result.status && STATUS[result.status]) {
     const texto = `${p.name || p.code}: ${STATUS[result.status].icon} ${STATUS[result.status].label}`;
+    // Só no 🔔 do app: notificação do sistema sai apenas ao fim da busca completa (depois da OLX),
+    // enviada pelo server.py do PC
     adicionarNotificacao('status', texto);
-    notificarSistema(texto);
   }
   p.status = result.status;
   p.lastEvent = last ? { text: last.text, time: last.time } : null;
@@ -723,12 +724,6 @@ $('#btnDesativarPush').addEventListener('click', async () => {
   renderNotifAparelho();
   toast('Notificações desativadas neste aparelho');
 });
-
-// App em segundo plano detectou mudança (ex.: status da Shopee pelo Worker): notificação do sistema
-function notificarSistema(body) {
-  if (!document.hidden || !pushSuportado() || Notification.permission !== 'granted') return;
-  navigator.serviceWorker.controller?.postMessage({ tipo: 'notificar', title: 'Rastreazera', body, tag: `status-${Date.now()}` });
-}
 
 // ---------- Configurar o celular por QR code ----------
 // O QR abre o site público com #config=<token e Gist>. O fragmento (#) não é enviado a nenhum servidor
