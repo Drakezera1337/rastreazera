@@ -7,6 +7,7 @@
 //   pedido_busca.json     { ts }: o celular pediu uma busca; o server.py do PC confere a cada minuto
 //   andamento.json        etapa da busca no PC (gravado pelo server.py) — o celular mostra o progresso
 //   push.json             aparelhos inscritos para notificações (o server.py do PC envia)
+//   fb.json, push_fb.json FB Radar (fb/): anúncios do Facebook Marketplace e aparelhos que recebem os avisos
 const Sync = (() => {
   const CFG_KEY = 'rastreazera:sync';
   const FILE = 'rastreazera.json';
@@ -121,18 +122,24 @@ const Sync = (() => {
     return ts;
   }
 
-  // Aparelhos que recebem notificações (push.json): o server.py do PC envia para cada um.
-  // novo = null remove o aparelho.
-  async function atualizarInscricao(endpoint, novo) {
+  // Aparelhos que recebem notificações (push.json; push_fb.json no FB Radar): o server.py do PC
+  // envia para cada um. novo = null remove o aparelho.
+  async function atualizarInscricao(endpoint, novo, arquivo = FILE_PUSH) {
     const { token, gistId } = config();
     const gist = await request(`${API}/${gistId}`, { token });
-    const lista = (await lerArquivo(gist, FILE_PUSH, [])).filter((r) => r && r.endpoint !== endpoint);
+    const lista = (await lerArquivo(gist, arquivo, [])).filter((r) => r && r.endpoint !== endpoint);
     if (novo) lista.push(novo);
     await request(`${API}/${gistId}`, {
       token,
       method: 'PATCH',
-      body: { files: { [FILE_PUSH]: { content: JSON.stringify(lista, null, 1) } } },
+      body: { files: { [arquivo]: { content: JSON.stringify(lista, null, 1) } } },
     });
+  }
+
+  // Um arquivo do Gist (FB Radar: fb.json)
+  async function lerUm(nome, padrao = null) {
+    const { token, gistId } = config();
+    return lerArquivo(await request(`${API}/${gistId}`, { token }), nome, padrao);
   }
 
   // Une duas listas: para cada id, fica a versão com updatedAt mais recente.
@@ -145,5 +152,5 @@ const Sync = (() => {
     return [...map.values()];
   }
 
-  return { config, setConfig, enabled, encontrarExistente, create, pull, push, pedirBusca, atualizarInscricao, merge };
+  return { config, setConfig, enabled, encontrarExistente, create, pull, push, pedirBusca, atualizarInscricao, lerUm, merge };
 })();

@@ -124,6 +124,98 @@ def atualizar_prazos(estado):
         busca["publicar"] = True  # o celular recebe pelo Gist
 
 
+# ---- FB Radar (fb/): anúncios da categoria Consoles de Video Game do Facebook Marketplace ----
+# A extensão "FB Radar Coletor" (fb/coletor/) manda a página lida a cada poucos minutos (/api/fb/coleta).
+# Aqui ficam os anúncios das cidades escolhidas (config.cidades; vazio = todas), com quando apareceram
+# e mudanças de preço. Os novos vão para pendentesPush; laco_gist publica fb.json e avisa (push_fb.json).
+FB_FILE = ROOT / "fb_estado.json"
+FB_GUARDAR_MS = 7 * 24 * 3600 * 1000  # anúncio some do painel 7 dias depois da última vez que apareceu
+FB_MAX = 400
+FB_PUBLICAR_MAX = 200
+
+
+def ler_fb():
+    try:
+        fb = json.loads(FB_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fb = {}
+    fb.setdefault("config", {}).setdefault("cidades", [])
+    fb.setdefault("anuncios", {})
+    return fb
+
+
+def gravar_fb(fb):
+    FB_FILE.write_text(json.dumps(fb, ensure_ascii=False), encoding="utf-8")
+
+
+def sem_acento(texto):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(texto)) if unicodedata.category(c) != "Mn").lower().strip()
+
+
+def fb_publico(fb):
+    """O que o app mostra (GET /api/fb/estado e fb.json no Gist)."""
+    anuncios = sorted(fb["anuncios"].values(), key=lambda a: a.get("criadoEm") or a["vistoEm"], reverse=True)
+    agenda = fb.get("agenda") or {}
+    return {
+        "anuncios": anuncios[:FB_PUBLICAR_MAX],
+        "coleta": fb.get("coleta"),
+        "agenda": {"ativo": agenda.get("ativo", False), "intervalo": agenda.get("intervalo"),
+                   "proxima": agenda.get("proxima"), "em": agenda.get("em")},
+        "cidades": fb["config"]["cidades"],
+    }
+
+
+def aplicar_fb(acao, dados, fb):
+    agora = agora_ms()
+    if acao == "coleta":
+        coleta = {"em": agora, "metodo": str(dados.get("metodo", ""))[:20]}
+        if dados.get("erro"):
+            coleta["erro"] = str(dados["erro"])[:200]
+        cidades = {sem_acento(c) for c in fb["config"]["cidades"]}
+        novos, mudou = 0, False
+        for a in dados.get("anuncios") or []:
+            if not isinstance(a, dict) or not re.fullmatch(r"\d{5,25}", str(a.get("id", ""))):
+                continue
+            if cidades and sem_acento(a.get("cidade", "")) not in cidades:
+                continue
+            campos = {k: a.get(k) for k in ("titulo", "preco", "precoTexto", "cidade", "uf", "foto", "criadoEm",
+                                             "vendedor", "vendido", "reservado")}
+            atual = fb["anuncios"].get(a["id"])
+            if not atual:
+                fb["anuncios"][a["id"]] = {"id": a["id"], **campos, "vistoEm": agora, "ultimaVez": agora}
+                novos += 1
+                if fb.get("base"):  # a primeira coleta só preenche o painel (não avisa o que já existia)
+                    fb.setdefault("pendentesPush", []).append(a["id"])
+                mudou = True
+                continue
+            if campos["preco"] != atual.get("preco") and atual.get("preco") is not None:
+                atual["precoAnterior"] = atual["preco"]
+                atual["precoMudouEm"] = agora
+            if any(atual.get(k) != v for k, v in campos.items() if k != "foto"):
+                mudou = True
+            atual.update(campos, ultimaVez=agora)
+        if not coleta.get("erro"):
+            fb["base"] = True
+        coleta.update(n=len(dados.get("anuncios") or []), novos=novos)
+        fb["coleta"] = coleta
+        # Limpeza: some FB_GUARDAR_MS depois da última vez que apareceu e guarda no máximo FB_MAX
+        lista = sorted(fb["anuncios"].values(), key=lambda x: x["vistoEm"], reverse=True)
+        fb["anuncios"] = {x["id"]: x for x in lista[:FB_MAX] if agora - x.get("ultimaVez", x["vistoEm"]) < FB_GUARDAR_MS}
+        fb["publicar"] = fb.get("publicar") or mudou or bool(coleta.get("erro"))
+    elif acao == "agenda":
+        fb["agenda"] = {"ativo": bool(dados.get("ativo")), "intervalo": int(dados.get("intervalo") or 0) or None,
+                        "proxima": int(dados["proxima"]) if dados.get("proxima") else None, "em": agora}
+    elif acao == "config":  # cidades, pelo ⚙️ do FB Radar no PC
+        cidades = dados.get("cidades")
+        if isinstance(cidades, list):
+            fb["config"]["cidades"] = [str(c).strip()[:60] for c in cidades if str(c).strip()][:30]
+            fb["publicar"] = True
+    else:
+        return False
+    return True
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -139,7 +231,11 @@ class Handler(SimpleHTTPRequestHandler):
             # O token do Gist nunca sai do servidor: só informa se está configurado
             resposta = {**estado["config"], "gistConfigurado": bool(estado.get("segredos", {}).get("gist"))}
             return self.send_json(200, resposta, cors=False)
-        if url.path.lstrip("/") == ESTADO_FILE.name:
+        if url.path == "/api/fb/estado":
+            with LOCK:
+                fb = ler_fb()
+            return self.send_json(200, fb_publico(fb), cors=False)
+        if url.path.lstrip("/") in (ESTADO_FILE.name, FB_FILE.name):
             return self.send_json(404, {"error": "não encontrado"}, cors=False)
 
         match = re.fullmatch(r"/api/(\w+)", url.path)
@@ -183,7 +279,7 @@ class Handler(SimpleHTTPRequestHandler):
     # ---------- POST ----------
     def do_POST(self):
         url = urlparse(self.path)
-        match = re.fullmatch(r"/api/(olx|busca|config)(?:/(\w+))?", url.path)
+        match = re.fullmatch(r"/api/(olx|busca|config|fb)(?:/(\w+))?", url.path)
         if not match or (match.group(1) != "config") != bool(match.group(2)):
             return self.send_json(404, {"error": "rota inexistente"}, cors=False)
         # Só o próprio Rastreazera e extensões do Chrome podem mexer na ponte:
@@ -198,6 +294,13 @@ class Handler(SimpleHTTPRequestHandler):
             dados = json.loads(self.rfile.read(min(tamanho, 5_000_000)) or b"{}")
         except ValueError:
             return self.send_json(400, {"error": "JSON inválido"}, cors=False)
+
+        if match.group(1) == "fb":
+            with LOCK:
+                fb = ler_fb()
+                ok = aplicar_fb(match.group(2), dados, fb)
+                gravar_fb(fb)
+            return self.send_json(200 if ok else 404, {"ok": True} if ok else {"error": "ação inexistente"}, cors=False)
 
         acao = f"{match.group(1)}/{match.group(2) or 'salvar'}"
         with LOCK:
@@ -415,6 +518,11 @@ def sincronizar_gist():
     except Exception as exc:  # noqa: BLE001 — notificação nunca derruba a sincronização
         print(f"Notificações: {exc}", file=sys.stderr)
 
+    try:
+        processar_fb(gist, arquivos_gist)
+    except Exception as exc:  # noqa: BLE001
+        print(f"FB Radar: {exc}", file=sys.stderr)
+
     pedido = busca.get("pedidoCelular") or {}
     pedido_aberto = (pedido.get("recebidoEm", 0) > (busca.get("ultima") or {}).get("fimEm", 0)
                      and agora_ms() - pedido.get("recebidoEm", 0) < PEDIDO_CELULAR_VALIDADE_MS)
@@ -565,6 +673,58 @@ def processar_notificacoes(gist, arquivos_gist):
     if mortos:
         vivos = [i for i in inscricoes if i["endpoint"] not in set(mortos)]
         gist_request(gist, "PATCH", {"files": {"push.json": {"content": json.dumps(vivos, indent=1)}}})
+
+
+FB_REPUBLICAR_MS = 15 * 60 * 1000  # sem novidade, republica fb.json mesmo assim (o celular vê que o PC está vivo)
+
+
+def fb_texto(a):
+    preco = a.get("precoTexto") or (f"R${a['preco']:.0f}" if a.get("preco") else "sem preço")
+    return f"{a.get('titulo', '')[:60]} · {preco} · {a.get('cidade', '')}"
+
+
+def processar_fb(gist, arquivos_gist):
+    """Publica fb.json quando muda (ou a cada 15 min) e avisa os aparelhos de push_fb.json dos anúncios novos."""
+    with LOCK:
+        fb = ler_fb()
+        pendentes = fb.pop("pendentesPush", [])
+        publicar = fb.pop("publicar", False) or agora_ms() - fb.get("publicadoEm", 0) > FB_REPUBLICAR_MS
+        if publicar:
+            fb["publicadoEm"] = agora_ms()
+        gravar_fb(fb)
+    if publicar and fb.get("coleta"):
+        conteudo = json.dumps({**fb_publico(fb), "ts": agora_ms()}, ensure_ascii=False)
+        gist_request(gist, "PATCH", {"files": {"fb.json": {"content": conteudo}}})
+
+    if not PUSH_PEM.exists():
+        return
+    inscricoes = [i for i in json_do_arquivo(arquivos_gist, "push_fb.json", []) if isinstance(i, dict) and i.get("endpoint")]
+    mortos = []
+    testes = fb.get("testesPush", {})
+    for insc in inscricoes:
+        if insc.get("testeEm", 0) > testes.get(insc["endpoint"], 0):
+            testes[insc["endpoint"]] = insc["testeEm"]
+            mortos += enviar_push([insc], {"title": "FB Radar", "body": "🔔 Teste: as notificações estão funcionando neste aparelho!",
+                                           "tag": "fbradar-teste"})
+    novos = [fb["anuncios"][i] for i in pendentes if i in fb["anuncios"]]
+    if novos and inscricoes:
+        if len(novos) == 1:
+            a = novos[0]
+            payload = {"title": f"🎮 {a.get('precoTexto') or 'Novo anúncio'} · {a.get('titulo', '')[:50]}",
+                       "body": f"{a.get('cidade', '')} — toque para abrir no Facebook", "tag": f"fbradar-{a['id']}",
+                       "url": f"https://www.facebook.com/marketplace/item/{a['id']}/", "image": a.get("foto") or None}
+        else:
+            corpo = "\n".join(fb_texto(a) for a in novos[:6]) + (f"\n…e mais {len(novos) - 6}" if len(novos) > 6 else "")
+            payload = {"title": f"🎮 {len(novos)} anúncios novos", "body": corpo, "tag": "fbradar-novos"}
+        mortos += enviar_push(inscricoes, payload)
+        print(f"FB Radar: {len(novos)} anúncio(s) novo(s) para {len(inscricoes)} aparelho(s)")
+    with LOCK:
+        fb_atual = ler_fb()
+        fb_atual["testesPush"] = testes
+        gravar_fb(fb_atual)
+    if mortos:
+        vivos = [i for i in inscricoes if i["endpoint"] not in set(mortos)]
+        gist_request(gist, "PATCH", {"files": {"push_fb.json": {"content": json.dumps(vivos, indent=1)}}})
 
 
 def laco_gist():

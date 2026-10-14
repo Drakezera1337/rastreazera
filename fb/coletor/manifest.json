@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "FB Radar Coletor",
+  "version": "1.0",
+  "description": "Confere a categoria Consoles de Video Game do Facebook Marketplace a cada poucos minutos e envia os anúncios para o FB Radar (server.py em localhost:5500).",
+  "permissions": ["alarms", "scripting", "tabs", "storage"],
+  "host_permissions": [
+    "https://www.facebook.com/*",
+    "http://localhost:5500/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "FB Radar Coletor",
+    "default_popup": "popup.html",
+    "default_icon": { "48": "icon48.png", "128": "icon128.png" }
+  },
+  "icons": { "48": "icon48.png", "128": "icon128.png" }
+}

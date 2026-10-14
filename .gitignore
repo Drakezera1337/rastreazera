@@ -5,3 +5,6 @@ __pycache__/
 server.log
 .vendor/
 push_vapid.pem
+
+# FB Radar (anúncios e cidades)
+fb_estado.json

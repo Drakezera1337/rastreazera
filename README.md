@@ -107,6 +107,28 @@ Verificações feitas pelo botão da própria dashboard da OLX também chegam (i
 Requer o `server.py` rodando e o Chrome aberto com a extensão. O estado das buscas fica em `ponte_estado.json` (fora do git).
 A ponte só aceita chamadas do próprio Rastreazera e de extensões do Chrome.
 
+## FB Radar (Facebook Marketplace → celular)
+
+App separado (pasta `fb/`, ícone próprio na tela de início) com os anúncios novos da categoria
+**Consoles de Video Game** do Facebook Marketplace, nas cidades escolhidas. Endereço: `http://localhost:5500/fb/`
+no PC e `…/rastreazera/fb/` no GitHub Pages.
+
+- **Coletor**: a extensão `fb/coletor` ("FB Radar Coletor") roda no Chrome do PC, logado no Facebook. Pelo ícone dela:
+  **▶ Iniciar** confere a categoria (ordenada pelos mais novos) a cada 3 min (2–15, ajustável). Ela baixa a página
+  e lê os dados que a própria página traz (id, título, preço, cidade, foto, quando foi criado) — sem depender do
+  selo "Acabou de ser anunciado" e sem abrir aba (se a página vier sem os dados, abre uma em segundo plano e fecha).
+- **server.py** guarda os anúncios das cidades escolhidas em `fb_estado.json` (fora do git) por 7 dias,
+  marca mudança de preço e publica `fb.json` no mesmo Gist do Rastreazera.
+- **App**: fotos, preço, cidade e há quanto tempo; selo **NOVO** (chegou depois da sua última visita) e
+  **⬇ %** (baixou de preço); busca, categorias (PS5, PS4, Xbox, Nintendo, Retrô, Controles…), ordem por preço,
+  ⭐ salvar e ✕ ocultar (ficam no aparelho). Tocar no card abre o anúncio no Facebook.
+- **Cidades**: ⚙️ no PC (vazio = todas as que o Facebook mostrar no raio da sua conta).
+- **Celular**: no PC, ⚙️ → **Mostrar QR code**; no celular, abra o FB Radar → ⚙️ → **Ler QR do PC** (ou aponte a
+  câmera) e adicione à tela inicial. **🔔 Ativar notificações**: o PC avisa cada anúncio novo (com foto; tocar
+  abre o anúncio). Inscrições em `push_fb.json` no Gist.
+
+**Instalar o coletor:** `chrome://extensions` → Modo do desenvolvedor → **Carregar sem compactação** → pasta `fb/coletor`.
+
 ## Por que um proxy?
 
 O navegador bloqueia (CORS) que um site consulte diretamente o site de outra empresa, como a SPX.

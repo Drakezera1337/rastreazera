@@ -4,6 +4,7 @@ Atualiza, num número só:
 - sw.js        → nome do cache do modo offline (rastreazera-vN)
 - index.html   → ?v=N nos arquivos CSS/JS (o celular baixa os novos, sem reaproveitar velhos)
 - config.js    → RZ_VERSAO (aparece em ⚙️ para conferir se o aparelho está atualizado)
+- fb/sw.js e fb/index.html → o mesmo, para o FB Radar
 """
 import re
 from pathlib import Path
@@ -25,5 +26,7 @@ nova = atual + 1
 
 gravar("sw.js", sw.replace(f"rastreazera-v{atual}", f"rastreazera-v{nova}"))
 gravar("index.html", re.sub(r'((?:href|src)="[\w/.-]+\.(?:css|js))(?:\?v=\d+)?"', rf'\1?v={nova}"', ler("index.html")))
+gravar("fb/sw.js", re.sub(r"fbradar-v\d+", f"fbradar-v{nova}", ler("fb/sw.js")))
+gravar("fb/index.html", re.sub(r'((?:href|src)="[\w/.-]+\.(?:css|js))(?:\?v=\d+)?"', rf'\1?v={nova}"', ler("fb/index.html")))
 gravar("config.js", re.sub(r"const RZ_VERSAO = \d+;", f"const RZ_VERSAO = {nova};", ler("config.js")))
 print(f"versão {atual} → {nova}")

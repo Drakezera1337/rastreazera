@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>FB Radar</title>
+  <meta name="description" content="Anúncios novos de consoles de video game no Facebook Marketplace">
+  <meta name="theme-color" content="#18181b">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="FB Radar">
+  <link rel="stylesheet" href="styles.css?v=28">
+</head>
+<body>
+  <header class="topo">
+    <div class="marca">
+      <img src="icon.svg" alt="" width="30" height="30">
+      <div>
+        <h1>FB Radar</h1>
+        <button id="status" class="status" type="button">Carregando…</button>
+      </div>
+    </div>
+    <div class="topo-acoes">
+      <button id="btnAtualizar" class="icone" type="button" title="Atualizar" aria-label="Atualizar">🔄</button>
+      <button id="btnConfig" class="icone" type="button" title="Configurações" aria-label="Configurações">⚙️</button>
+    </div>
+  </header>
+
+  <div class="ferramentas">
+    <input id="busca" type="search" placeholder="Buscar (ex.: ps4 slim, controle)" autocomplete="off">
+    <select id="ordem" aria-label="Ordenar">
+      <option value="novos">Mais novos</option>
+      <option value="barato">Menor preço</option>
+      <option value="caro">Maior preço</option>
+    </select>
+  </div>
+  <nav id="chips" class="chips" aria-label="Categorias"></nav>
+
+  <div id="aviso" class="aviso" hidden></div>
+  <p id="resumo" class="resumo"></p>
+  <main id="lista" class="grade"></main>
+  <div id="vazio" class="vazio" hidden></div>
+
+  <dialog id="dlgConfig">
+    <form method="dialog" class="dlg-topo">
+      <h2>Configurações</h2>
+      <button class="icone" value="fechar" aria-label="Fechar">✕</button>
+    </form>
+
+    <section>
+      <h3>🔔 Notificações neste aparelho</h3>
+      <p id="notifStatus" class="dica"></p>
+      <div class="botoes">
+        <button id="btnAtivarPush" type="button" class="primario">🔔 Ativar notificações</button>
+        <button id="btnTestarPush" type="button" hidden>Enviar teste</button>
+        <button id="btnDesativarPush" type="button" hidden>Desativar</button>
+      </div>
+      <p class="dica">O PC avisa cada anúncio novo das cidades escolhidas (precisa do PC ligado com o Chrome aberto).</p>
+    </section>
+
+    <section id="secCidades" hidden>
+      <h3>📍 Cidades</h3>
+      <p class="dica">Só entram anúncios destas cidades (uma por linha). Vazio = todas as que o Facebook mostrar.</p>
+      <textarea id="cidades" rows="5"></textarea>
+      <div class="botoes"><button id="btnSalvarCidades" type="button" class="primario">Salvar cidades</button></div>
+    </section>
+
+    <section id="secQr" hidden>
+      <h3>📱 Configurar o celular</h3>
+      <p class="dica">No celular, abra o FB Radar → ⚙️ → <strong>Ler QR do PC</strong> e aponte para este código
+        (ou aponte a câmera do celular direto, para abrir já configurado).</p>
+      <div class="botoes"><button id="btnMostrarQr" type="button">Mostrar QR code</button></div>
+      <div id="qrCodigo" class="qr" hidden></div>
+    </section>
+
+    <section id="secConectar" hidden>
+      <h3>🔗 Conectar ao PC</h3>
+      <p class="dica">No PC, abra o FB Radar (localhost:5500/fb) → ⚙️ → <strong>Mostrar QR code</strong>.</p>
+      <div class="botoes"><button id="btnLerQr" type="button" class="primario">📷 Ler QR do PC</button></div>
+      <div id="leitorQr" class="leitor" hidden>
+        <video id="videoQr" playsinline muted></video>
+        <button id="btnPararQr" type="button">Cancelar</button>
+      </div>
+      <input id="linkConfig" type="url" placeholder="…ou cole aqui o link de configuração">
+    </section>
+
+    <section>
+      <h3>🧩 Coletor (no PC)</h3>
+      <p class="dica">A extensão <strong>FB Radar Coletor</strong> (pasta <code>fb/coletor</code>) roda no Chrome do PC, logado no
+        Facebook, e confere a categoria <em>Consoles de Video Game</em> a cada poucos minutos. Ligue pelo ícone dela (▶ Iniciar).</p>
+      <p id="versao" class="dica"></p>
+    </section>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="../config.js?v=28"></script>
+  <script src="../sync.js?v=28"></script>
+  <script src="app.js?v=28"></script>
+</body>
+</html>
