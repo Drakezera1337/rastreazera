@@ -1162,7 +1162,7 @@ function registrarResultadoBusca(stats) {
   if (!b.esperadas.includes(stats.fonte)) b.esperadas.push(stats.fonte);
   gravarJSON(BUSCA_KEY, b);
   if (b.esperadas.every((f) => b.resultados[f])) finalizarBusca();
-  else toast(`${textoFonte(stats)} — aguardando ${b.esperadas.filter((f) => !b.resultados[f]).map((f) => FONTES[f]).join(', ')}`);
+  else toast(`${textoFonte(stats) || `${FONTES[stats.fonte]}: sem novidades`} — aguardando ${b.esperadas.filter((f) => !b.resultados[f]).map((f) => FONTES[f]).join(', ')}`);
 }
 
 function registrarFalhaBusca(fonte, motivo) {
@@ -1181,6 +1181,8 @@ function plural(n, singular, pluralTxt) {
   return `${n} ${n === 1 ? singular : pluralTxt}`;
 }
 
+// Texto de uma loja no resumo: só aparece com novidade ("Shopee: 1 novo, 2 atualizados") ou
+// problema ("OLX: extensão não respondeu"). Sem nada a contar, devolve null.
 function textoFonte(s) {
   const loja = FONTES[s.fonte] || s.fonte;
   if (s.erro) return `${loja}: ${s.erro}`;
@@ -1188,17 +1190,20 @@ function textoFonte(s) {
     s.novos && plural(s.novos, 'novo', 'novos'),
     s.atualizados && plural(s.atualizados, 'atualizado', 'atualizados'),
   ].filter(Boolean);
-  if (!detalhes.length) detalhes.push('sem novidades');
-  if (s.semCodigo) detalhes.push(`${s.semCodigo} sem código`);
   if (s.parado) detalhes.push('verificação interrompida');
-  return `${plural(s.total, 'pedido', 'pedidos')} ${loja} (${detalhes.join(', ')})`;
+  return detalhes.length ? `${loja}: ${detalhes.join(', ')}` : null;
+}
+
+function resumoBusca(resultados) {
+  const ordenados = Object.values(resultados)
+    .sort((a, b) => ORDEM_FONTES.indexOf(a.fonte) - ORDEM_FONTES.indexOf(b.fonte));
+  const novidades = ordenados.filter((s) => !s.erro).map(textoFonte).filter(Boolean);
+  const problemas = ordenados.filter((s) => s.erro).map(textoFonte);
+  return [...(novidades.length ? novidades : ['Sem atualizações']), ...problemas].join(' · ');
 }
 
 function notificarBusca(resultados) {
-  const texto = Object.values(resultados)
-    .sort((a, b) => ORDEM_FONTES.indexOf(a.fonte) - ORDEM_FONTES.indexOf(b.fonte))
-    .map(textoFonte)
-    .join(' · ');
+  const texto = resumoBusca(resultados);
   adicionarNotificacao('busca', texto);
   toast(texto);
 }
