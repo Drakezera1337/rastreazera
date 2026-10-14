@@ -113,12 +113,47 @@ async function carregar({ manual = false } = {}) {
 }
 
 // ---------- Tela ----------
-function filtrados() {
+// Vendedores repostam o mesmo anúncio várias vezes (ids diferentes, às vezes em perfis diferentes):
+// mesmo título e mesmo preço viram um card só, com o mais recente na frente e o selo ×N.
+// Erros de digitação ("Conttole") também contam: até 2 letras de diferença no título.
+function tituloBase(a) {
+  return semAcento(a.titulo).replace(/[^a-z0-9]/g, '');
+}
+function quaseIguais(x, y) {
+  if (x === y) return true;
+  if (Math.min(x.length, y.length) < 8 || Math.abs(x.length - y.length) > 2) return false;
+  let ant = Array.from({ length: y.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= x.length; i++) {
+    const atual = [i];
+    for (let j = 1; j <= y.length; j++) {
+      atual[j] = Math.min(ant[j] + 1, atual[j - 1] + 1, ant[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    }
+    ant = atual;
+  }
+  return ant[y.length] <= 2;
+}
+function agrupados() {
+  const data = (a) => a.criadoEm || a.vistoEm;
+  const grupos = [];
+  for (const a of dados?.anuncios || []) {
+    const base = tituloBase(a);
+    const g = grupos.find((x) => (x.preco || 0) === (a.preco || 0) && quaseIguais(x.base, base));
+    if (!g) { grupos.push({ ...a, base, ids: [a.id], primeiroVisto: a.vistoEm }); continue; }
+    g.ids.push(a.id);
+    g.primeiroVisto = Math.min(g.primeiroVisto, a.vistoEm);
+    if (data(a) > data(g)) Object.assign(g, { ...a, base: g.base, ids: g.ids, primeiroVisto: g.primeiroVisto });
+  }
+  return grupos.map((g) => ({
+    ...g, oculto: g.ids.some((id) => ocultos.has(id)), fav: g.ids.some((id) => favoritos.has(id)),
+  }));
+}
+
+function filtrados(grupos) {
   const termos = semAcento($('#busca').value).split(/\s+/).filter(Boolean);
-  const lista = (dados?.anuncios || []).filter((a) => {
-    if (chip === 'ocultos') return ocultos.has(a.id);
-    if (ocultos.has(a.id)) return false;
-    if (chip === 'favoritos') return favoritos.has(a.id);
+  const lista = grupos.filter((a) => {
+    if (chip === 'ocultos') return a.oculto;
+    if (a.oculto) return false;
+    if (chip === 'favoritos') return a.fav;
     if (chip !== 'todos' && !categoriasDe(a).includes(chip)) return false;
     const texto = semAcento(`${a.titulo} ${a.cidade}`);
     return termos.every((t) => texto.includes(t));
@@ -131,15 +166,15 @@ function filtrados() {
   return lista;
 }
 
-function renderChips() {
-  const todos = (dados?.anuncios || []).filter((a) => !ocultos.has(a.id));
+function renderChips(grupos) {
+  const todos = grupos.filter((a) => !a.oculto);
   const conta = (id) => todos.filter((a) => categoriasDe(a).includes(id)).length;
   const itens = [
     { id: 'todos', nome: 'Todos', n: todos.length },
-    { id: 'favoritos', nome: '⭐ Salvos', n: todos.filter((a) => favoritos.has(a.id)).length },
+    { id: 'favoritos', nome: '⭐ Salvos', n: todos.filter((a) => a.fav).length },
     ...CATEGORIAS.map((c) => ({ id: c.id, nome: c.nome, n: conta(c.id) })),
   ];
-  const nOcultos = (dados?.anuncios || []).filter((a) => ocultos.has(a.id)).length;
+  const nOcultos = grupos.filter((a) => a.oculto).length;
   if (nOcultos) itens.push({ id: 'ocultos', nome: '🙈 Ocultos', n: nOcultos });
   if (!itens.some((i) => i.id === chip)) chip = 'todos';
   const html = itens
@@ -150,18 +185,18 @@ function renderChips() {
 }
 
 function cardHtml(a) {
-  const novo = a.vistoEm > marcoNovo;
+  const novo = a.primeiroVisto > marcoNovo;
   const baixou = a.precoAnterior && a.preco && a.preco < a.precoAnterior;
   const selos = [
     novo ? '<span class="selo novo">NOVO</span>' : '',
+    a.ids.length > 1 ? `<span class="selo" title="Postado ${a.ids.length} vezes">×${a.ids.length}</span>` : '',
     baixou ? `<span class="selo baixou">⬇ ${Math.round((1 - a.preco / a.precoAnterior) * 100)}%</span>` : '',
     a.vendido ? '<span class="selo">VENDIDO</span>' : a.reservado ? '<span class="selo">RESERVADO</span>' : '',
   ].join('');
   const preco = a.preco ? (a.precoTexto || moeda(a.preco)) : 'Sem preço';
-  const fav = favoritos.has(a.id);
-  const oculto = ocultos.has(a.id);
+  const { fav, oculto } = a;
   return `
-    <a class="card${novo ? ' e-novo' : ''}${a.vendido ? ' vendido' : ''}" href="${linkAnuncio(a)}" target="_blank" rel="noopener" data-id="${esc(a.id)}">
+    <a class="card${novo ? ' e-novo' : ''}${a.vendido ? ' vendido' : ''}" href="${linkAnuncio(a)}" target="_blank" rel="noopener" data-ids="${esc(a.ids.join(','))}">
       <div class="foto">
         ${a.foto ? `<img src="${esc(a.foto)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'sem-foto',textContent:'🎮'}))">` : '<div class="sem-foto">🎮</div>'}
         <div class="selos">${selos}</div>
@@ -201,13 +236,14 @@ function render() {
   $('#aviso').hidden = !aviso;
   $('#aviso').textContent = aviso || '';
 
-  renderChips();
-  const lista = filtrados();
+  const grupos = agrupados();
+  renderChips(grupos);
+  const lista = filtrados(grupos);
   // Só redesenha a grade quando algo mudou (senão as fotos piscam a cada atualização automática)
   const html = lista.map(cardHtml).join('');
   if (html !== htmlGrade) { $('#lista').innerHTML = html; htmlGrade = html; }
-  const total = (dados?.anuncios || []).length;
-  const novos = (dados?.anuncios || []).filter((a) => a.vistoEm > marcoNovo && !ocultos.has(a.id)).length;
+  const total = grupos.length;
+  const novos = grupos.filter((a) => a.primeiroVisto > marcoNovo && !a.oculto).length;
   const nCidades = dados?.cidades?.length || 0;
   const cidades = nCidades ? (nCidades === 1 ? dados.cidades[0] : `${nCidades} cidades`) : 'todas as cidades';
   $('#resumo').title = nCidades ? dados.cidades.join(', ') : '';
@@ -248,11 +284,13 @@ $('#lista').addEventListener('click', (e) => {
   const b = e.target.closest('[data-acao]');
   if (!b) return;
   e.preventDefault();
-  const id = b.closest('.card').dataset.id;
+  // Vale para o grupo todo (reposts); um repost novo de um grupo oculto continua oculto
+  const ids = b.closest('.card').dataset.ids.split(',');
   const conjunto = b.dataset.acao === 'favorito' ? favoritos : ocultos;
-  if (conjunto.has(id)) conjunto.delete(id); else conjunto.add(id);
+  const marcar = !ids.some((id) => conjunto.has(id));
+  ids.forEach((id) => (marcar ? conjunto.add(id) : conjunto.delete(id)));
   gravarJSON(b.dataset.acao === 'favorito' ? K.favoritos : K.ocultos, [...conjunto]);
-  if (b.dataset.acao === 'ocultar' && ocultos.has(id)) toast('Anúncio oculto (veja em 🙈 Ocultos)');
+  if (b.dataset.acao === 'ocultar' && marcar) toast('Anúncio oculto (veja em 🙈 Ocultos)');
   render();
 });
 $('#vazio').addEventListener('click', (e) => { if (e.target.id === 'btnConectarVazio') abrirConfig(); });

@@ -153,6 +153,31 @@ def sem_acento(texto):
     return "".join(c for c in unicodedata.normalize("NFD", str(texto)) if unicodedata.category(c) != "Mn").lower().strip()
 
 
+def titulo_base(a):
+    return re.sub(r"[^a-z0-9]", "", sem_acento(a.get("titulo", "")))
+
+
+def quase_iguais(x, y):
+    """Títulos iguais ou com até 2 letras de diferença (erro de digitação em repost)."""
+    if x == y:
+        return True
+    if min(len(x), len(y)) < 8 or abs(len(x) - len(y)) > 2:
+        return False
+    ant = list(range(len(y) + 1))
+    for i in range(1, len(x) + 1):
+        atual = [i]
+        for j in range(1, len(y) + 1):
+            atual.append(min(ant[j] + 1, atual[j - 1] + 1, ant[j - 1] + (x[i - 1] != y[j - 1])))
+        ant = atual
+    return ant[-1] <= 2
+
+
+def e_repost(a, vistos):
+    """Mesmo preço e título (quase) igual a um anúncio já guardado: vendedores repostam com ids e perfis diferentes."""
+    base, preco = titulo_base(a), a.get("preco") or 0
+    return any(p == preco and quase_iguais(b, base) for b, p in vistos)
+
+
 def fb_publico(fb):
     """O que o app mostra (GET /api/fb/estado e fb.json no Gist)."""
     anuncios = sorted(fb["anuncios"].values(), key=lambda a: a.get("criadoEm") or a["vistoEm"], reverse=True)
@@ -174,6 +199,7 @@ def aplicar_fb(acao, dados, fb):
             coleta["erro"] = str(dados["erro"])[:200]
         cidades = {sem_acento(c) for c in fb["config"]["cidades"]}
         novos, mudou = 0, False
+        ja_vistos = [(titulo_base(x), x.get("preco") or 0) for x in fb["anuncios"].values()]
         for a in dados.get("anuncios") or []:
             if not isinstance(a, dict) or not re.fullmatch(r"\d{5,25}", str(a.get("id", ""))):
                 continue
@@ -185,8 +211,10 @@ def aplicar_fb(acao, dados, fb):
             if not atual:
                 fb["anuncios"][a["id"]] = {"id": a["id"], **campos, "vistoEm": agora, "ultimaVez": agora}
                 novos += 1
-                if fb.get("base"):  # a primeira coleta só preenche o painel (não avisa o que já existia)
+                # A primeira coleta só preenche o painel; repost de anúncio já visto também não avisa
+                if fb.get("base") and not e_repost(a, ja_vistos):
                     fb.setdefault("pendentesPush", []).append(a["id"])
+                ja_vistos.append((titulo_base(a), a.get("preco") or 0))
                 mudou = True
                 continue
             if campos["preco"] != atual.get("preco") and atual.get("preco") is not None:

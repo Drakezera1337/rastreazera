@@ -1,5 +1,5 @@
 // FB Radar: cache para abrir rápido/offline e notificações de anúncios novos (enviadas pelo server.py do PC).
-const CACHE = 'fbradar-v28';
+const CACHE = 'fbradar-v29';
 const ASSETS = ['./', 'index.html', 'styles.css', 'app.js', '../config.js', '../sync.js',
   'icon.svg', 'icon-192.png', 'badge-96.png', 'manifest.webmanifest'];
 
