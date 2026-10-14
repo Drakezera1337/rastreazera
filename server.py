@@ -355,6 +355,8 @@ class Handler(SimpleHTTPRequestHandler):
             for loja, marcada in (dados.get("lojas") or {}).items():
                 if loja in LOJAS and isinstance(marcada, bool):
                     ativas[loja] = marcada
+            if dados.get("lojas"):
+                estado["config"]["lojasEm"] = agora  # mais nova que um config.json antigo do celular
             if "gist" in dados:
                 segredos = estado.setdefault("segredos", {})
                 gist = dados["gist"]
@@ -511,9 +513,18 @@ def sincronizar_gist():
         pedido_ts = int(json.loads(arquivo["content"]).get("ts", 0)) if arquivo else 0
     except (ValueError, TypeError, AttributeError):
         pedido_ts = 0
+    # "Onde buscar pedidos" alterado pelo celular (config.json): vale se for mais novo que o do PC
+    config_celular = json_do_arquivo(arquivos_gist, "config.json", {})
     with LOCK:
         estado = ler_estado()
         atualizar_prazos(estado)
+        config = estado["config"]
+        if isinstance(config_celular, dict) and int(config_celular.get("ts") or 0) > config.get("lojasEm", 0):
+            for loja, marcada in (config_celular.get("lojas") or {}).items():
+                if loja in LOJAS and isinstance(marcada, bool):
+                    config["lojas"][loja] = marcada
+            config["lojasEm"] = int(config_celular["ts"])
+            print(f"Onde buscar pedidos alterado pelo celular: {config['lojas']}")
         busca = estado["busca"]
         if pedido_ts > busca.get("pedidoCelularVisto", 0):
             busca["pedidoCelularVisto"] = pedido_ts

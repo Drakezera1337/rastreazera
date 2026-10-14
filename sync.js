@@ -7,6 +7,7 @@
 //   pedido_busca.json     { ts }: o celular pediu uma busca; o server.py do PC confere a cada minuto
 //   andamento.json        etapa da busca no PC (gravado pelo server.py) — o celular mostra o progresso
 //   push.json             aparelhos inscritos para notificações (o server.py do PC envia)
+//   config.json           { lojas, ts }: 'Onde buscar pedidos' alterado no celular (o PC aplica)
 //   fb.json, push_fb.json FB Radar (fb/): anúncios do Facebook Marketplace e aparelhos que recebem os avisos
 const Sync = (() => {
   const CFG_KEY = 'rastreazera:sync';
@@ -15,6 +16,7 @@ const Sync = (() => {
   const FILE_PEDIDO = 'pedido_busca.json';
   const FILE_ANDAMENTO = 'andamento.json';
   const FILE_PUSH = 'push.json';
+  const FILE_CONFIG = 'config.json';
   const API = 'https://api.github.com/gists';
 
   function config() {
@@ -97,6 +99,7 @@ const Sync = (() => {
       busca: await lerArquivo(gist, FILE_BUSCA, null),
       pedido: await lerArquivo(gist, FILE_PEDIDO, null),
       andamento: await lerArquivo(gist, FILE_ANDAMENTO, null),
+      config: await lerArquivo(gist, FILE_CONFIG, null),
     };
   }
 
@@ -120,6 +123,16 @@ const Sync = (() => {
       body: { files: { [FILE_PEDIDO]: { content: JSON.stringify({ ts }) } } },
     });
     return ts;
+  }
+
+  // Celular (sem server.py): grava "Onde buscar pedidos"; o PC aplica em até 1 min
+  async function salvarConfigLojas(lojas) {
+    const { token, gistId } = config();
+    await request(`${API}/${gistId}`, {
+      token,
+      method: 'PATCH',
+      body: { files: { [FILE_CONFIG]: { content: JSON.stringify({ lojas, ts: Date.now() }) } } },
+    });
   }
 
   // Aparelhos que recebem notificações (push.json; push_fb.json no FB Radar): o server.py do PC
@@ -152,5 +165,5 @@ const Sync = (() => {
     return [...map.values()];
   }
 
-  return { config, setConfig, enabled, encontrarExistente, create, pull, push, pedirBusca, atualizarInscricao, lerUm, merge };
+  return { config, setConfig, enabled, encontrarExistente, create, pull, push, pedirBusca, salvarConfigLojas, atualizarInscricao, lerUm, merge };
 })();

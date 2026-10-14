@@ -468,37 +468,69 @@ $('#btnSettings').addEventListener('click', () => {
 // ---------- Onde buscar pedidos (guardado no server.py: vale também para a extensão Coletor) ----------
 const caixasLojas = () => [...document.querySelectorAll('#lojasBusca input[name=loja]')];
 
+// Caixa marcada = loja ativa nas buscas. No PC, lê/grava direto no server.py; no celular, lê o que
+// o PC publicou no Gist (andamento.json → lojasAtivas) e grava em config.json, que o PC aplica em até 1 min.
+function mostrarLojas(lojas, aviso = '') {
+  caixasLojas().forEach((c) => { c.checked = lojas[c.value] !== false; });
+  $('#lojasBusca').classList.remove('desabilitado');
+  $('#lojasBuscaAviso').textContent = aviso;
+  $('#lojasBuscaAviso').hidden = !aviso;
+}
+
+function lojasBloqueadas(aviso) {
+  $('#lojasBusca').classList.add('desabilitado');
+  $('#lojasBuscaAviso').textContent = aviso;
+  $('#lojasBuscaAviso').hidden = false;
+}
+
 async function carregarLojasBusca() {
-  const aviso = $('#lojasBuscaAviso');
+  if (TEM_SERVIDOR) {
+    try {
+      const res = await fetch('/api/config', { cache: 'no-store' });
+      if (!res.ok) throw new Error();
+      return mostrarLojas((await res.json()).lojas);
+    } catch {
+      return lojasBloqueadas('Não foi possível falar com o server.py.');
+    }
+  }
+  if (!Sync.enabled()) return lojasBloqueadas('Ligue a sincronização (⚙️ → Ler QR do PC) para escolher daqui.');
+  lojasBloqueadas('Carregando…');
   try {
-    if (!TEM_SERVIDOR) throw new Error();
-    const res = await fetch('/api/config', { cache: 'no-store' });
-    if (!res.ok) throw new Error();
-    const { lojas } = await res.json();
-    caixasLojas().forEach((c) => { c.checked = lojas[c.value] !== false; });
-    $('#lojasBusca').classList.remove('desabilitado');
-    aviso.hidden = true;
-  } catch {
-    $('#lojasBusca').classList.add('desabilitado');
-    aviso.textContent = 'Disponível com o server.py rodando.';
-    aviso.hidden = false;
+    const remoto = await Sync.pull();
+    const doPc = remoto.andamento?.lojasAtivas;
+    // Mudança feita aqui que o PC ainda não aplicou: mostra a escolha nova
+    const iguais = (a, b) => a && b && ORDEM_FONTES.every((l) => (a[l] !== false) === (b[l] !== false));
+    const pendente = remoto.config?.ts > (remoto.andamento?.ts || 0) && !iguais(remoto.config.lojas, doPc)
+      ? remoto.config.lojas : null;
+    if (pendente) mostrarLojas(pendente, 'Salvo — o PC aplica na próxima conferência (até 1 min, com o PC ligado).');
+    else if (doPc) mostrarLojas(doPc);
+    else lojasBloqueadas('O PC ainda não informou as lojas ativas (ele precisa estar ligado).');
+  } catch (err) {
+    lojasBloqueadas(`Não foi possível ler do GitHub: ${err.message}`);
   }
 }
 
 $('#lojasBusca').addEventListener('change', async (e) => {
   const caixa = e.target;
+  const nome = FONTES[caixa.value];
   try {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lojas: { [caixa.value]: caixa.checked } }),
-    });
-    if (!res.ok) throw new Error();
-    const nome = FONTES[caixa.value];
-    toast(caixa.checked ? `${nome} incluída nas buscas` : `${nome} fora das buscas`);
+    if (TEM_SERVIDOR) {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lojas: { [caixa.value]: caixa.checked } }),
+      });
+      if (!res.ok) throw new Error();
+      toast(caixa.checked ? `${nome} ativada nas buscas` : `${nome} desativada das buscas`);
+    } else {
+      const lojas = Object.fromEntries(caixasLojas().map((c) => [c.value, c.checked]));
+      await Sync.salvarConfigLojas(lojas);
+      mostrarLojas(lojas, 'Salvo — o PC aplica na próxima conferência (até 1 min, com o PC ligado).');
+      toast(caixa.checked ? `${nome} ativada — o PC aplica em até 1 min` : `${nome} desativada — o PC aplica em até 1 min`);
+    }
   } catch {
     caixa.checked = !caixa.checked;
-    toast('Não foi possível salvar — o server.py está rodando?');
+    toast('Não foi possível salvar a escolha');
   }
 });
 
