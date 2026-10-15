@@ -1,4 +1,4 @@
-// Consulta automática de rastreio, via proxy (server.py localmente, worker.js em produção).
+﻿// Consulta automática de rastreio, via proxy (server.py localmente, worker.js em produção).
 // Cada rastreador devolve { events: [{ time, text, location }], status } com o evento mais recente primeiro.
 const Trackers = (() => {
   const PROXY_KEY = 'rastreazera:proxy';
@@ -51,15 +51,15 @@ const Trackers = (() => {
     };
   }
 
-  // ---- Correios (API do 17TRACK pelo server.py do PC; a chave só existe lá) ----
+  // ---- Correios (API da Ship24 pelo server.py do PC; a chave só existe lá) ----
   // O server.py já devolve no formato do app; um código recém-cadastrado vem { pendente }.
-  let t17Ativo = false; // o app liga quando o server.py diz que a chave está configurada
+  let correiosAtivo = false; // o app liga quando o server.py diz que a chave está configurada
   const local = () => ['localhost', '127.0.0.1'].includes(location.hostname);
 
-  async function t17(code) {
-    const res = await fetch(`${location.origin}/api/t17?tn=${encodeURIComponent(code)}`);
+  async function correios(code) {
+    const res = await fetch(`${location.origin}/api/correios?tn=${encodeURIComponent(code)}`);
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json.error || `17TRACK respondeu ${res.status}`);
+    if (!res.ok) throw new Error(json.error || `Ship24 respondeu ${res.status}`);
     if (json.erro) throw new Error(json.erro);
     return json.pendente ? { pendente: true, events: [] } : json;
   }
@@ -69,15 +69,15 @@ const Trackers = (() => {
   function suportado(p) {
     if (p.carrier === 'shopee') return Boolean(proxyUrl());
     // Correios: só no PC, com chave, e não para pedidos do AliExpress (já trazem o histórico
-    // da importação — consultar gastaria cota do 17TRACK à toa)
-    return CORREIOS.includes(p.carrier) && t17Ativo && local() && !String(p.orderRef || '').startsWith('aliexpress:');
+    // da importação — consultar gastaria cota da Ship24 à toa)
+    return CORREIOS.includes(p.carrier) && correiosAtivo && local() && !String(p.orderRef || '').startsWith('aliexpress:');
   }
 
   return {
     proxyUrl,
     setProxyUrl,
-    setT17Ativo: (ativo) => { t17Ativo = Boolean(ativo); },
+    setCorreiosAtivo: (ativo) => { correiosAtivo = Boolean(ativo); },
     supports: suportado,
-    fetch: (p) => (p.carrier === 'shopee' ? spx(p.code) : t17(p.code)),
+    fetch: (p) => (p.carrier === 'shopee' ? spx(p.code) : correios(p.code)),
   };
 })();

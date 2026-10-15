@@ -1,4 +1,4 @@
-﻿// Sincronização opcional usando um Gist secreto do GitHub como armazenamento.
+// Sincronização opcional usando um Gist secreto do GitHub como armazenamento.
 // A API do GitHub aceita chamadas direto do navegador (CORS), então funciona no GitHub Pages.
 //
 // Arquivos no Gist:
@@ -8,7 +8,7 @@
 //   andamento.json        etapa da busca no PC (gravado pelo server.py) — o celular mostra o progresso
 //   push.json             aparelhos inscritos para notificações (o server.py do PC envia)
 //   config.json           { lojas, ts }: 'Onde buscar pedidos' alterado no celular (o PC aplica)
-//   rastreios.json        { codigo: { status, events, atualizadoEm } }: Correios pelo 17TRACK (gravado pelo server.py)
+//   rastreios.json        { codigo: { status, events, atualizadoEm } }: Correios pela Ship24 (gravado pelo server.py)
 const Sync = (() => {
   const CFG_KEY = 'rastreazera:sync';
   const FILE = 'rastreazera.json';

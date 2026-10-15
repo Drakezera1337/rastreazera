@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Rastreazera">
-  <link rel="stylesheet" href="styles.css?v=33">
+  <link rel="stylesheet" href="styles.css?v=34">
 </head>
 <body>
   <header class="topbar">
@@ -213,22 +213,22 @@
         <a id="bookmarklet" class="btn bookmarklet" onclick="event.preventDefault(); alert('Arraste este botão para a barra de favoritos.');">📥 Importar pedidos</a>
       </div>
 
-      <div id="secaoT17" hidden>
-        <h3>Correios (17TRACK)</h3>
+      <div id="secaoCorreios" hidden>
+        <h3>Correios (Ship24)</h3>
         <p class="hint">
-          Com a chave da API do 17TRACK, os pacotes dos Correios aparecem com a linha do tempo do app, o card
+          Com a chave da API da Ship24, os pacotes dos Correios aparecem com a linha do tempo do app, o card
           atualiza sozinho e entra nas notificações. Crie a conta em
-          <a href="https://api.17track.net/" target="_blank" rel="noopener">api.17track.net</a> e copie a chave em
-          <em>Settings</em>. Fica só neste PC (não vai para o site nem para o GitHub). Cada código dos Correios gasta
+          <a href="https://www.ship24.com/" target="_blank" rel="noopener">ship24.com</a> (plano grátis da Tracking API: 10 rastreios
+          por mês) e copie a API key no painel. Fica só neste PC (não vai para o site nem para o GitHub). Cada código dos Correios gasta
           1 da cota uma única vez (os do AliExpress não gastam: já vêm com o histórico).
         </p>
-        <p id="t17Status" class="hint"></p>
-        <label>Chave da API do 17TRACK
-          <input id="t17Chave" type="password" autocomplete="off" placeholder="Cole a chave aqui">
+        <p id="correiosStatus" class="hint"></p>
+        <label>Chave da API da Ship24
+          <input id="correiosChave" type="password" autocomplete="off" placeholder="Cole a chave aqui">
         </label>
         <div class="row-buttons">
-          <button type="button" id="btnT17Salvar" class="btn primary">Salvar chave</button>
-          <button type="button" id="btnT17Remover" class="btn ghost" hidden>Remover chave</button>
+          <button type="button" id="btnCorreiosSalvar" class="btn primary">Salvar chave</button>
+          <button type="button" id="btnCorreiosRemover" class="btn ghost" hidden>Remover chave</button>
         </div>
       </div>
 
@@ -261,10 +261,10 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="config.js?v=33"></script>
-  <script src="carriers.js?v=33"></script>
-  <script src="sync.js?v=33"></script>
-  <script src="trackers.js?v=33"></script>
-  <script src="app.js?v=33"></script>
+  <script src="config.js?v=34"></script>
+  <script src="carriers.js?v=34"></script>
+  <script src="sync.js?v=34"></script>
+  <script src="trackers.js?v=34"></script>
+  <script src="app.js?v=34"></script>
 </body>
 </html>

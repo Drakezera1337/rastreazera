@@ -8,3 +8,4 @@ push_vapid.pem
 
 # FB Radar (anúncios e cidades)
 fb_estado.json
+server.log.1

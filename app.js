@@ -1,4 +1,4 @@
-﻿const STORAGE_KEY = 'rastreazera:pacotes';
+const STORAGE_KEY = 'rastreazera:pacotes';
 
 const STATUS = {
   aguardando: { label: 'Aguardando postagem', icon: '🕓' },
@@ -231,7 +231,7 @@ let widgetScript;
 
 async function refreshItem(p) {
   const result = await Trackers.fetch(p);
-  if (result.pendente) { // Correios recém-cadastrado no 17TRACK: os dados chegam em alguns minutos
+  if (result.pendente) { // Correios recém-cadastrado na Ship24: os dados chegam em alguns minutos
     p.lastCheck = Date.now() - 25 * 60000; // tenta de novo em ~5 min (refreshAll)
     return { ...result, status: p.status, events: p.events || [] };
   }
@@ -240,7 +240,7 @@ async function refreshItem(p) {
   if (p.carrier !== 'shopee' && result.events.length) {
     p.events = result.events.slice(0, 60);
     p.eventsAt = Date.now();
-    p.fonteEventos = '17track';
+    p.fonteEventos = 'correios';
   }
   if (p.status !== result.status && STATUS[result.status]) {
     const texto = `${p.name || p.code}: ${STATUS[result.status].icon} ${STATUS[result.status].label}`;
@@ -345,7 +345,7 @@ async function showTracking(p) {
       const result = await refreshItem(p);
       if (pacoteAberto === p) renderDetalhes(p); // a consulta pode ter trazido status/evento novos
       box.innerHTML = result.pendente && !result.events.length
-        ? '<p class="empty">Código cadastrado no 17TRACK agora — os dados dos Correios chegam em alguns minutos. Abra de novo daqui a pouco.</p>'
+        ? '<p class="empty">Código cadastrado na Ship24 agora — os dados dos Correios chegam em alguns minutos. Abra de novo daqui a pouco.</p>'
         : timelineHtml(result.events);
     } catch (err) {
       box.innerHTML = `<p class="empty">Não foi possível consultar (${esc(err.message)}).<br>
@@ -362,12 +362,12 @@ async function showTracking(p) {
     return;
   }
 
-  // Histórico guardado: da importação da loja (AliExpress) ou dos Correios pelo 17TRACK (o PC atualiza
+  // Histórico guardado: da importação da loja (AliExpress) ou dos Correios pela Ship24 (o PC atualiza
   // a cada busca). Opção de abrir o widget do 17TRACK para conferir na hora.
   const correios = ['correios', 'postal_intl'].includes(p.carrier);
   if (p.events?.length) {
-    const origem = p.fonteEventos === '17track'
-      ? `Correios (17TRACK), atualizado pelo PC em ${fmtDateTime(p.eventsAt || p.updatedAt)}.`
+    const origem = p.fonteEventos === 'correios'
+      ? `Correios, atualizado pelo PC em ${fmtDateTime(p.eventsAt || p.updatedAt)}.`
       : `Histórico da importação do ${esc(p.store || 'pedido')} em ${fmtDateTime(p.eventsAt || p.updatedAt)}.`;
     box.innerHTML = `
       <p class="track-note">${origem}
@@ -378,7 +378,7 @@ async function showTracking(p) {
     return;
   }
   if (correios) {
-    // Ainda sem histórico: o PC consulta o 17TRACK na próxima busca (precisa da chave em ⚙️ no PC)
+    // Ainda sem histórico: o PC consulta a Ship24 na próxima busca (precisa da chave em ⚙️ no PC)
     box.innerHTML = `
       <p class="empty">O histórico dos Correios aparece aqui depois da próxima busca do PC.<br>
         <button type="button" class="btn small" id="btnWidget">Ver agora no 17TRACK</button></p>`;
@@ -485,49 +485,49 @@ $('#btnSettings').addEventListener('click', () => {
   formSettings.proxy.value = localStorage.getItem('rastreazera:proxy') || '';
   carregarLojasBusca();
   renderNotifAparelho();
-  $('#secaoT17').hidden = !TEM_SERVIDOR;
-  if (TEM_SERVIDOR) fetch('/api/config', { cache: 'no-store' }).then((r) => r.json()).then((c) => mostrarT17(c.t17Configurado)).catch(() => {});
+  $('#secaoCorreios').hidden = !TEM_SERVIDOR;
+  if (TEM_SERVIDOR) fetch('/api/config', { cache: 'no-store' }).then((r) => r.json()).then((c) => mostrarChaveCorreios(c.rastreioConfigurado)).catch(() => {});
   dlgSettings.showModal();
 });
 
 // ---------- Onde buscar pedidos (guardado no server.py: vale também para a extensão Coletor) ----------
 const caixasLojas = () => [...document.querySelectorAll('#lojasBusca input[name=loja]')];
 
-// ---------- Chave do 17TRACK (Correios) — só no PC, guardada pelo server.py ----------
-function mostrarT17(configurada) {
-  Trackers.setT17Ativo(configurada);
-  $('#secaoT17').hidden = !TEM_SERVIDOR;
-  $('#t17Status').textContent = configurada
-    ? '✅ Chave configurada: os Correios são consultados pelo 17TRACK.'
+// ---------- Chave da Ship24 (Correios) — só no PC, guardada pelo server.py ----------
+function mostrarChaveCorreios(configurada) {
+  Trackers.setCorreiosAtivo(configurada);
+  $('#secaoCorreios').hidden = !TEM_SERVIDOR;
+  $('#correiosStatus').textContent = configurada
+    ? '✅ Chave configurada: os Correios são consultados pela Ship24.'
     : 'Sem chave: os Correios aparecem só pelo widget do 17TRACK.';
-  $('#btnT17Remover').hidden = !configurada;
-  $('#t17Chave').value = '';
+  $('#btnCorreiosRemover').hidden = !configurada;
+  $('#correiosChave').value = '';
 }
 
-async function salvarT17(chave) {
+async function salvarChaveCorreios(chave) {
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ t17: chave }),
+      body: JSON.stringify({ ship24: chave }),
     });
     if (!res.ok) throw new Error();
     const cfg = await (await fetch('/api/config', { cache: 'no-store' })).json();
-    mostrarT17(cfg.t17Configurado);
-    if (chave && !cfg.t17Configurado) return toast('Chave inválida (confira se copiou inteira)');
-    toast(chave ? 'Chave do 17TRACK salva' : 'Chave do 17TRACK removida');
+    mostrarChaveCorreios(cfg.rastreioConfigurado);
+    if (chave && !cfg.rastreioConfigurado) return toast('Chave inválida (confira se copiou inteira)');
+    toast(chave ? 'Chave da Ship24 salva' : 'Chave da Ship24 removida');
     if (chave) refreshAll();
   } catch {
     toast('Não foi possível salvar — o server.py está rodando?');
   }
 }
 
-$('#btnT17Salvar').addEventListener('click', () => {
-  const chave = $('#t17Chave').value.trim();
-  if (!chave) return toast('Cole a chave da API do 17TRACK');
-  salvarT17(chave);
+$('#btnCorreiosSalvar').addEventListener('click', () => {
+  const chave = $('#correiosChave').value.trim();
+  if (!chave) return toast('Cole a chave da API da Ship24');
+  salvarChaveCorreios(chave);
 });
-$('#btnT17Remover').addEventListener('click', () => salvarT17(null));
+$('#btnCorreiosRemover').addEventListener('click', () => salvarChaveCorreios(null));
 
 // Caixa marcada = loja ativa nas buscas. No PC, lê/grava direto no server.py; no celular, lê o que
 // o PC publicou no Gist (andamento.json → lojasAtivas) e grava em config.json, que o PC aplica em até 1 min.
@@ -648,7 +648,7 @@ let sincronizando = false;
 let sincronizarDeNovo = false;
 let syncPausaAte = 0;
 
-// Histórico dos Correios que o PC buscou no 17TRACK (rastreios.json). updatedAt = atualizadoEm do PC,
+// Histórico dos Correios que o PC buscou na Ship24 (rastreios.json). updatedAt = atualizadoEm do PC,
 // igual em todos os aparelhos: assim ninguém regrava o Gist só por ter aplicado a mesma coisa.
 function aplicarRastreios(rastreios) {
   if (!rastreios || typeof rastreios !== 'object') return;
@@ -660,7 +660,7 @@ function aplicarRastreios(rastreios) {
     p.events = r.events.slice(0, 60);
     p.lastEvent = { text: r.events[0].text, time: r.events[0].time };
     p.eventsAt = r.atualizadoEm;
-    p.fonteEventos = '17track';
+    p.fonteEventos = 'correios';
     if (STATUS[r.status]) p.status = r.status;
     p.updatedAt = Math.max(p.updatedAt || 0, r.atualizadoEm);
     if (novoEvento) adicionarNotificacao('status', `${p.name || p.code}: ${r.events[0].text}`);
@@ -1463,7 +1463,7 @@ async function checarBusca() {
     servidorConfigurado = true;
     const cfg = await fetch('/api/config', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
     if (cfg && !cfg.gistConfigurado && Sync.enabled()) enviarGistAoServidor();
-    if (cfg) { mostrarT17(cfg.t17Configurado); refreshAll(); }
+    if (cfg) { mostrarChaveCorreios(cfg.rastreioConfigurado); refreshAll(); }
   }
   mostrarProgressoBusca(estado);
   importarUltimaBusca(estado.ultima);

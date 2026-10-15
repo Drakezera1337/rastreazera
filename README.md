@@ -81,6 +81,14 @@ O sininho no topo guarda o histórico (últimas 100) e mostra quantas são novas
   e o favorito geram o resumo da loja que buscaram. Falhas aparecem no lugar ("OLX: extensão não respondeu").
 - **Mudança de status** detectada na consulta automática (Shopee Xpress), ex.: "PS5: 📍 Saiu para entrega".
 
+### Correios (API da Ship24)
+
+Pacotes dos Correios aparecem com a linha do tempo do app (como a Shopee) usando a API da
+[Ship24](https://www.ship24.com/) — plano grátis da Tracking API: 10 rastreios novos por mês. A chave fica só no PC
+(⚙️ → **Correios (Ship24)** no `localhost:5500`, guardada pelo `server.py`). O PC consulta na hora ao abrir os
+detalhes e, a cada busca concluída, atualiza os Correios a caminho e grava `rastreios.json` no Gist (o celular aplica).
+Pedidos do AliExpress (já trazem histórico) e entregues não são consultados, para não gastar a cota.
+
 ### Notificações no celular (push)
 
 Em ⚙️ → **🔔 Ativar notificações**, o aparelho se inscreve (fica em `push.json` no Gist). Ao fim de cada
