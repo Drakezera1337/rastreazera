@@ -247,8 +247,10 @@ def aplicar_fb(acao, dados, fb):
             fb["config"]["cidades"] = [str(c).strip()[:60] for c in cidades if str(c).strip()][:30]
             fb["publicar"] = True
         gist = dados.get("gist")
-        if isinstance(gist, dict) and re.fullmatch(r"[\w-]{20,255}", str(gist.get("token", ""))) \
-                and re.fullmatch(r"[0-9a-f]{20,40}", str(gist.get("gistId", ""))):
+        if gist is not None:
+            if not (isinstance(gist, dict) and re.fullmatch(r"[\w-]{20,255}", str(gist.get("token", "")))
+                    and re.fullmatch(r"[0-9a-f]{20,40}", str(gist.get("gistId", "")))):
+                return False  # token/Gist em formato inválido: o app mostra o erro em vez de fingir que salvou
             fb.setdefault("segredos", {})["gist"] = {"token": gist["token"], "gistId": gist["gistId"]}
             fb["publicar"] = True  # manda os anúncios já guardados para o Gist novo
     else:
@@ -285,7 +287,10 @@ class Handler(SimpleHTTPRequestHandler):
         if url.path == "/api/fb/estado":
             with LOCK:
                 fb = ler_fb()
-            return self.send_json(200, fb_publico(fb), cors=False)
+            resposta = fb_publico(fb)
+            # Só para o app no PC (não vai ao Gist): final do token em uso, para conferir qual está valendo
+            resposta["gistTokenFim"] = ((fb.get("segredos") or {}).get("gist") or {}).get("token", "")[-4:]
+            return self.send_json(200, resposta, cors=False)
         if url.path.lstrip("/") in (ESTADO_FILE.name, FB_FILE.name):
             return self.send_json(404, {"error": "não encontrado"}, cors=False)
 
