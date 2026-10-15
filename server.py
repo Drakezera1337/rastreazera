@@ -869,7 +869,7 @@ def processar_notificacoes(gist, arquivos_gist):
         gist_request(gist, "PATCH", {"files": {"push.json": {"content": json.dumps(vivos, indent=1)}}})
 
 
-FB_REPUBLICAR_MS = 15 * 60 * 1000  # sem novidade, republica fb.json mesmo assim (o celular vê que o PC está vivo)
+FB_REPUBLICAR_MS = 2 * 60 * 1000  # sem novidade, republica fb.json mesmo assim (o celular mostra a hora da última conferência)
 
 
 def fb_texto(a):
