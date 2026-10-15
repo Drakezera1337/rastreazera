@@ -231,7 +231,17 @@ let widgetScript;
 
 async function refreshItem(p) {
   const result = await Trackers.fetch(p);
+  if (result.pendente) { // Correios recém-cadastrado no 17TRACK: os dados chegam em alguns minutos
+    p.lastCheck = Date.now() - 25 * 60000; // tenta de novo em ~5 min (refreshAll)
+    return { ...result, status: p.status, events: p.events || [] };
+  }
   const last = result.events[0];
+  // Correios: guarda o histórico (o celular mostra mesmo sem consultar); Shopee o celular consulta pelo Worker
+  if (p.carrier !== 'shopee' && result.events.length) {
+    p.events = result.events.slice(0, 60);
+    p.eventsAt = Date.now();
+    p.fonteEventos = '17track';
+  }
   if (p.status !== result.status && STATUS[result.status]) {
     const texto = `${p.name || p.code}: ${STATUS[result.status].icon} ${STATUS[result.status].label}`;
     // Só no 🔔 do app: notificação do sistema sai apenas ao fim da busca completa (depois da OLX),
@@ -249,7 +259,7 @@ async function refreshItem(p) {
 // Atualiza em segundo plano os pacotes a caminho (no máximo a cada 30 min por pacote)
 async function refreshAll() {
   const due = visibleItems().filter(
-    (p) => Trackers.supports(p.carrier) && p.status !== 'entregue' && Date.now() - (p.lastCheck || 0) > 30 * 60000
+    (p) => Trackers.supports(p) && p.status !== 'entregue' && Date.now() - (p.lastCheck || 0) > 30 * 60000
   );
   for (const p of due) {
     try { await refreshItem(p); } catch { /* tenta de novo na próxima vez */ }
@@ -330,11 +340,13 @@ async function showTracking(p) {
   if (!dlgTrack.open) dlgTrack.showModal();
   $('.track-corpo').scrollTop = 0;
 
-  if (Trackers.supports(p.carrier)) {
+  if (Trackers.supports(p)) {
     try {
       const result = await refreshItem(p);
       if (pacoteAberto === p) renderDetalhes(p); // a consulta pode ter trazido status/evento novos
-      box.innerHTML = timelineHtml(result.events);
+      box.innerHTML = result.pendente && !result.events.length
+        ? '<p class="empty">Código cadastrado no 17TRACK agora — os dados dos Correios chegam em alguns minutos. Abra de novo daqui a pouco.</p>'
+        : timelineHtml(result.events);
     } catch (err) {
       box.innerHTML = `<p class="empty">Não foi possível consultar (${esc(err.message)}).<br>
         Use o botão “Site da transportadora”.</p>`;
@@ -350,15 +362,26 @@ async function showTracking(p) {
     return;
   }
 
-  // Histórico trazido pela importação da loja (ex.: AliExpress), com opção de consultar no 17TRACK
+  // Histórico guardado: da importação da loja (AliExpress) ou dos Correios pelo 17TRACK (o PC atualiza
+  // a cada busca). Opção de abrir o widget do 17TRACK para conferir na hora.
+  const correios = ['correios', 'postal_intl'].includes(p.carrier);
   if (p.events?.length) {
+    const origem = p.fonteEventos === '17track'
+      ? `Correios (17TRACK), atualizado pelo PC em ${fmtDateTime(p.eventsAt || p.updatedAt)}.`
+      : `Histórico da importação do ${esc(p.store || 'pedido')} em ${fmtDateTime(p.eventsAt || p.updatedAt)}.`;
     box.innerHTML = `
-      <p class="track-note">
-        Histórico da importação do ${esc(p.store || 'pedido')} em ${fmtDateTime(p.eventsAt || p.updatedAt)}.
-        Importe de novo para atualizar.
-        <button type="button" class="btn small" id="btnWidget">Consultar no 17TRACK</button>
+      <p class="track-note">${origem}
+        <button type="button" class="btn small" id="btnWidget">Conferir no 17TRACK</button>
       </p>
       ${timelineHtml(p.events)}`;
+    $('#btnWidget').addEventListener('click', () => showWidget(p, carrier));
+    return;
+  }
+  if (correios) {
+    // Ainda sem histórico: o PC consulta o 17TRACK na próxima busca (precisa da chave em ⚙️ no PC)
+    box.innerHTML = `
+      <p class="empty">O histórico dos Correios aparece aqui depois da próxima busca do PC.<br>
+        <button type="button" class="btn small" id="btnWidget">Ver agora no 17TRACK</button></p>`;
     $('#btnWidget').addEventListener('click', () => showWidget(p, carrier));
     return;
   }
@@ -462,11 +485,49 @@ $('#btnSettings').addEventListener('click', () => {
   formSettings.proxy.value = localStorage.getItem('rastreazera:proxy') || '';
   carregarLojasBusca();
   renderNotifAparelho();
+  $('#secaoT17').hidden = !TEM_SERVIDOR;
+  if (TEM_SERVIDOR) fetch('/api/config', { cache: 'no-store' }).then((r) => r.json()).then((c) => mostrarT17(c.t17Configurado)).catch(() => {});
   dlgSettings.showModal();
 });
 
 // ---------- Onde buscar pedidos (guardado no server.py: vale também para a extensão Coletor) ----------
 const caixasLojas = () => [...document.querySelectorAll('#lojasBusca input[name=loja]')];
+
+// ---------- Chave do 17TRACK (Correios) — só no PC, guardada pelo server.py ----------
+function mostrarT17(configurada) {
+  Trackers.setT17Ativo(configurada);
+  $('#secaoT17').hidden = !TEM_SERVIDOR;
+  $('#t17Status').textContent = configurada
+    ? '✅ Chave configurada: os Correios são consultados pelo 17TRACK.'
+    : 'Sem chave: os Correios aparecem só pelo widget do 17TRACK.';
+  $('#btnT17Remover').hidden = !configurada;
+  $('#t17Chave').value = '';
+}
+
+async function salvarT17(chave) {
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ t17: chave }),
+    });
+    if (!res.ok) throw new Error();
+    const cfg = await (await fetch('/api/config', { cache: 'no-store' })).json();
+    mostrarT17(cfg.t17Configurado);
+    if (chave && !cfg.t17Configurado) return toast('Chave inválida (confira se copiou inteira)');
+    toast(chave ? 'Chave do 17TRACK salva' : 'Chave do 17TRACK removida');
+    if (chave) refreshAll();
+  } catch {
+    toast('Não foi possível salvar — o server.py está rodando?');
+  }
+}
+
+$('#btnT17Salvar').addEventListener('click', () => {
+  const chave = $('#t17Chave').value.trim();
+  if (!chave) return toast('Cole a chave da API do 17TRACK');
+  salvarT17(chave);
+});
+$('#btnT17Remover').addEventListener('click', () => salvarT17(null));
 
 // Caixa marcada = loja ativa nas buscas. No PC, lê/grava direto no server.py; no celular, lê o que
 // o PC publicou no Gist (andamento.json → lojasAtivas) e grava em config.json, que o PC aplica em até 1 min.
@@ -587,6 +648,27 @@ let sincronizando = false;
 let sincronizarDeNovo = false;
 let syncPausaAte = 0;
 
+// Histórico dos Correios que o PC buscou no 17TRACK (rastreios.json). updatedAt = atualizadoEm do PC,
+// igual em todos os aparelhos: assim ninguém regrava o Gist só por ter aplicado a mesma coisa.
+function aplicarRastreios(rastreios) {
+  if (!rastreios || typeof rastreios !== 'object') return;
+  let mudou = false;
+  for (const p of visibleItems()) {
+    const r = rastreios[p.code];
+    if (!r?.events?.length || !r.atualizadoEm || (p.eventsAt || 0) >= r.atualizadoEm) continue;
+    const novoEvento = r.events[0].text !== p.lastEvent?.text;
+    p.events = r.events.slice(0, 60);
+    p.lastEvent = { text: r.events[0].text, time: r.events[0].time };
+    p.eventsAt = r.atualizadoEm;
+    p.fonteEventos = '17track';
+    if (STATUS[r.status]) p.status = r.status;
+    p.updatedAt = Math.max(p.updatedAt || 0, r.atualizadoEm);
+    if (novoEvento) adicionarNotificacao('status', `${p.name || p.code}: ${r.events[0].text}`);
+    mudou = true;
+  }
+  if (mudou) save({ sync: false });
+}
+
 function assinatura(items) {
   return JSON.stringify([...items].sort((a, b) => (a.id < b.id ? -1 : 1)));
 }
@@ -603,6 +685,7 @@ async function syncNow() {
     save({ sync: false });
     // Busca concluída no PC: o server.py publica no Gist, então chega também ao celular
     importarUltimaBusca(remoto.busca);
+    aplicarRastreios(remoto.rastreios);
     if (!TEM_SERVIDOR) atualizarInfoBusca(remoto.busca?.fimEm, remoto.andamento?.agenda);
     if (assinatura(state.items) !== assinatura(remoto.items)) await Sync.push(state.items);
     setSyncStatus('ok');
@@ -1380,6 +1463,7 @@ async function checarBusca() {
     servidorConfigurado = true;
     const cfg = await fetch('/api/config', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
     if (cfg && !cfg.gistConfigurado && Sync.enabled()) enviarGistAoServidor();
+    if (cfg) { mostrarT17(cfg.t17Configurado); refreshAll(); }
   }
   mostrarProgressoBusca(estado);
   importarUltimaBusca(estado.ultima);

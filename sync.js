@@ -8,6 +8,7 @@
 //   andamento.json        etapa da busca no PC (gravado pelo server.py) — o celular mostra o progresso
 //   push.json             aparelhos inscritos para notificações (o server.py do PC envia)
 //   config.json           { lojas, ts }: 'Onde buscar pedidos' alterado no celular (o PC aplica)
+//   rastreios.json        { codigo: { status, events, atualizadoEm } }: Correios pelo 17TRACK (gravado pelo server.py)
 const Sync = (() => {
   const CFG_KEY = 'rastreazera:sync';
   const FILE = 'rastreazera.json';
@@ -16,6 +17,7 @@ const Sync = (() => {
   const FILE_ANDAMENTO = 'andamento.json';
   const FILE_PUSH = 'push.json';
   const FILE_CONFIG = 'config.json';
+  const FILE_RASTREIOS = 'rastreios.json';
   const API = 'https://api.github.com/gists';
 
   function config() {
@@ -99,6 +101,7 @@ const Sync = (() => {
       pedido: await lerArquivo(gist, FILE_PEDIDO, null),
       andamento: await lerArquivo(gist, FILE_ANDAMENTO, null),
       config: await lerArquivo(gist, FILE_CONFIG, null),
+      rastreios: await lerArquivo(gist, FILE_RASTREIOS, null),
     };
   }
 

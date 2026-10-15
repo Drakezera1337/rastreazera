@@ -51,13 +51,33 @@ const Trackers = (() => {
     };
   }
 
-  const BY_CARRIER = { shopee: spx };
+  // ---- Correios (API do 17TRACK pelo server.py do PC; a chave só existe lá) ----
+  // O server.py já devolve no formato do app; um código recém-cadastrado vem { pendente }.
+  let t17Ativo = false; // o app liga quando o server.py diz que a chave está configurada
+  const local = () => ['localhost', '127.0.0.1'].includes(location.hostname);
+
+  async function t17(code) {
+    const res = await fetch(`${location.origin}/api/t17?tn=${encodeURIComponent(code)}`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || `17TRACK respondeu ${res.status}`);
+    if (json.erro) throw new Error(json.erro);
+    return json.pendente ? { pendente: true, events: [] } : json;
+  }
+
+  const CORREIOS = ['correios', 'postal_intl'];
+
+  function suportado(p) {
+    if (p.carrier === 'shopee') return Boolean(proxyUrl());
+    // Correios: só no PC, com chave, e não para pedidos do AliExpress (já trazem o histórico
+    // da importação — consultar gastaria cota do 17TRACK à toa)
+    return CORREIOS.includes(p.carrier) && t17Ativo && local() && !String(p.orderRef || '').startsWith('aliexpress:');
+  }
 
   return {
     proxyUrl,
     setProxyUrl,
-    // Sem proxy (ex.: celular antes de configurar o Worker) não há consulta automática
-    supports: (carrier) => carrier in BY_CARRIER && Boolean(proxyUrl()),
-    fetch: (p) => BY_CARRIER[p.carrier](p.code),
+    setT17Ativo: (ativo) => { t17Ativo = Boolean(ativo); },
+    supports: suportado,
+    fetch: (p) => (p.carrier === 'shopee' ? spx(p.code) : t17(p.code)),
   };
 })();

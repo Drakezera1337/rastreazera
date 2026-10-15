@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Rastreazera">
-  <link rel="stylesheet" href="styles.css?v=32">
+  <link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
   <header class="topbar">
@@ -213,6 +213,25 @@
         <a id="bookmarklet" class="btn bookmarklet" onclick="event.preventDefault(); alert('Arraste este botão para a barra de favoritos.');">📥 Importar pedidos</a>
       </div>
 
+      <div id="secaoT17" hidden>
+        <h3>Correios (17TRACK)</h3>
+        <p class="hint">
+          Com a chave da API do 17TRACK, os pacotes dos Correios aparecem com a linha do tempo do app, o card
+          atualiza sozinho e entra nas notificações. Crie a conta em
+          <a href="https://api.17track.net/" target="_blank" rel="noopener">api.17track.net</a> e copie a chave em
+          <em>Settings</em>. Fica só neste PC (não vai para o site nem para o GitHub). Cada código dos Correios gasta
+          1 da cota uma única vez (os do AliExpress não gastam: já vêm com o histórico).
+        </p>
+        <p id="t17Status" class="hint"></p>
+        <label>Chave da API do 17TRACK
+          <input id="t17Chave" type="password" autocomplete="off" placeholder="Cole a chave aqui">
+        </label>
+        <div class="row-buttons">
+          <button type="button" id="btnT17Salvar" class="btn primary">Salvar chave</button>
+          <button type="button" id="btnT17Remover" class="btn ghost" hidden>Remover chave</button>
+        </div>
+      </div>
+
       <h3>Consulta automática (Shopee Xpress)</h3>
       <p class="hint">
         Endereço do proxy que consulta a transportadora. Rodando pelo <code>server.py</code> no computador,
@@ -242,10 +261,10 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="config.js?v=32"></script>
-  <script src="carriers.js?v=32"></script>
-  <script src="sync.js?v=32"></script>
-  <script src="trackers.js?v=32"></script>
-  <script src="app.js?v=32"></script>
+  <script src="config.js?v=33"></script>
+  <script src="carriers.js?v=33"></script>
+  <script src="sync.js?v=33"></script>
+  <script src="trackers.js?v=33"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

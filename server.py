@@ -1,4 +1,4 @@
-﻿"""Servidor local do Rastreazera.
+"""Servidor local do Rastreazera.
 
 Serve os arquivos do site e repassa consultas de rastreio que o navegador
 não pode fazer direto (bloqueio de CORS), igual ao worker.js em produção.
@@ -12,6 +12,7 @@ Também coordena a busca automática de pedidos:
 Uso:  python server.py        (abre em http://localhost:5500)
 """
 import json
+from datetime import datetime
 import re
 import sys
 import threading
@@ -278,11 +279,15 @@ class Handler(SimpleHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path in ("/api/olx/estado", "/api/busca/estado"):
             return self.ler_ponte(url.path.split("/")[2])
+        if url.path == "/api/t17":
+            return self.consultar_t17(parse_qs(url.query).get("tn", [""])[0])
         if url.path == "/api/config":
             with LOCK:
                 estado = ler_estado()
             # O token do Gist nunca sai do servidor: só informa se está configurado
-            resposta = {**estado["config"], "gistConfigurado": bool(estado.get("segredos", {}).get("gist"))}
+            segredos = estado.get("segredos", {})
+            resposta = {**estado["config"], "gistConfigurado": bool(segredos.get("gist")),
+                        "t17Configurado": bool(segredos.get("t17"))}
             return self.send_json(200, resposta, cors=False)
         if url.path == "/api/fb/estado":
             with LOCK:
@@ -332,6 +337,20 @@ class Handler(SimpleHTTPRequestHandler):
         # Sem CORS liberado: só a própria página (mesma origem) e as extensões leem os pedidos
         self.send_json(200, resposta, cors=False)
 
+    def consultar_t17(self, tn):
+        tn = tn.strip().upper()
+        if not CODIGO_CORREIOS.fullmatch(tn):
+            return self.send_json(400, {"error": "código dos Correios inválido"}, cors=False)
+        with LOCK:
+            chave = ler_estado().get("segredos", {}).get("t17")
+        if not chave:
+            return self.send_json(409, {"error": "chave do 17TRACK não configurada (⚙️ no PC)"}, cors=False)
+        try:
+            resultado = t17_consultar(chave, [tn]).get(tn) or {"pendente": True}
+        except Exception as exc:  # noqa: BLE001
+            return self.send_json(502, {"error": f"17TRACK: {exc}"}, cors=False)
+        self.send_json(200, resultado, cors=False)
+
     # ---------- POST ----------
     def do_POST(self):
         url = urlparse(self.path)
@@ -380,6 +399,12 @@ class Handler(SimpleHTTPRequestHandler):
                     ativas[loja] = marcada
             if dados.get("lojas"):
                 estado["config"]["lojasEm"] = agora  # mais nova que um config.json antigo do celular
+            if "t17" in dados:
+                chave = dados["t17"]
+                if chave and re.fullmatch(r"[\w-]{10,200}", str(chave)):
+                    estado.setdefault("segredos", {})["t17"] = str(chave)
+                elif chave is None:
+                    estado.setdefault("segredos", {}).pop("t17", None)
             if "gist" in dados:
                 segredos = estado.setdefault("segredos", {})
                 gist = dados["gist"]
@@ -690,6 +715,105 @@ def payload_de(msgs):
     return {"title": f"Rastreazera · {len(msgs)} novidades", "body": corpo, "tag": "rastreazera-busca"}
 
 
+# ---- Correios pelo 17TRACK (API oficial; chave só no PC, em segredos.t17) ----
+# Cada código cadastrado gasta 1 da cota UMA vez; consultas seguintes não gastam. Por isso só entram
+# códigos dos Correios que não vieram do AliExpress (esses já trazem o histórico da importação).
+# O resultado vai para rastreios.json no Gist: { codigo: { status, events, atualizadoEm } }.
+T17_API = "https://api.17track.net/track/v2.4/"
+T17_CORREIOS = 2151  # "Correios Brazil" na lista de transportadoras do 17TRACK
+T17_NAO_CADASTRADO = -18019902
+CODIGO_CORREIOS = re.compile(r"[A-Z]{2}\d{9}[A-Z]{2}")
+T17_STATUS = {"Delivered": "entregue", "OutForDelivery": "saiu", "AvailableForPickup": "saiu",
+              "InTransit": "transito", "InfoReceived": "aguardando", "NotFound": "aguardando",
+              "Exception": "problema", "DeliveryFailure": "problema", "Expired": "problema"}
+
+
+def t17_post(chave, rota, corpo):
+    req = urllib.request.Request(T17_API + rota, data=json.dumps(corpo).encode(), method="POST",
+                                 headers={"17token": chave, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as res:
+        resposta = json.loads(res.read())
+    if resposta.get("code") not in (0, None):
+        erros = (resposta.get("data") or {}).get("errors") or [{}]
+        raise RuntimeError(erros[0].get("message") or f"código {resposta.get('code')}")
+    return resposta.get("data") or {}
+
+
+def t17_hora_ms(ev):
+    texto = ev.get("time_utc") or ev.get("time_iso") or ""
+    try:
+        return int(datetime.fromisoformat(texto.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return 0
+
+
+def t17_normalizar(info):
+    eventos, vistos = [], set()
+    for prov in (info.get("tracking") or {}).get("providers") or []:
+        for ev in prov.get("events") or []:
+            item = {"time": t17_hora_ms(ev), "text": (ev.get("description") or "").strip()[:300],
+                    "location": (ev.get("location") or "").strip()[:120]}
+            if item["text"] and item["time"] and (item["time"], item["text"]) not in vistos:
+                vistos.add((item["time"], item["text"]))
+                eventos.append(item)
+    eventos.sort(key=lambda e: e["time"], reverse=True)
+    status = T17_STATUS.get((info.get("latest_status") or {}).get("status"), "transito")
+    if eventos and status == "transito" and re.search(r"tribut|taxa|pagamento", eventos[0]["text"], re.I):
+        status = "fiscalizacao"
+    return {"status": status, "events": eventos[:60]}
+
+
+def t17_consultar(chave, codigos):
+    """{codigo: {status, events} | {pendente: True} | {erro}}. Cadastra os que ainda não estão."""
+    resultado = {}
+    for i in range(0, len(codigos), 40):  # até 40 códigos por chamada
+        lote = [{"number": c, "carrier": T17_CORREIOS} for c in codigos[i:i + 40]]
+        dados = t17_post(chave, "gettrackinfo", lote)
+        cadastrar = []
+        for aceito in dados.get("accepted") or []:
+            resultado[aceito["number"]] = t17_normalizar(aceito.get("track_info") or {})
+        for recusado in dados.get("rejected") or []:
+            erro = recusado.get("error") or {}
+            if erro.get("code") == T17_NAO_CADASTRADO:
+                cadastrar.append(recusado["number"])
+            else:
+                resultado[recusado["number"]] = {"erro": erro.get("message") or "sem dados"}
+        if cadastrar:
+            t17_post(chave, "register", [{"number": c, "carrier": T17_CORREIOS} for c in cadastrar])
+            print(f"17TRACK: {len(cadastrar)} código(s) cadastrado(s) (gasta cota uma vez)")
+            for c in cadastrar:
+                resultado[c] = {"pendente": True}  # o 17TRACK busca os dados em alguns minutos
+    return resultado
+
+
+def atualizar_correios(gist, arquivos_gist, estado, apelidos):
+    """Consulta os Correios a caminho, grava rastreios.json e devolve mensagens das mudanças."""
+    chave = estado.get("segredos", {}).get("t17")
+    if not chave:
+        return []
+    pacotes = [p for p in json_do_arquivo(arquivos_gist, "rastreazera.json", [])
+               if isinstance(p, dict) and not p.get("deleted") and p.get("status") != "entregue"
+               and CODIGO_CORREIOS.fullmatch(str(p.get("code", "")).upper())
+               and not str(p.get("orderRef") or "").startswith("aliexpress:")]
+    if not pacotes:
+        return []
+    anteriores = json_do_arquivo(arquivos_gist, "rastreios.json", {})
+    novos = dict(anteriores)
+    msgs = []
+    for codigo, r in t17_consultar(chave, sorted({str(p["code"]).upper() for p in pacotes})).items():
+        if not r.get("events"):
+            continue  # pendente/sem dados: mantém o que já havia
+        ant = anteriores.get(codigo) or {}
+        mudou = not ant.get("events") or ant["events"][0] != r["events"][0] or ant.get("status") != r["status"]
+        if mudou:
+            novos[codigo] = {**r, "atualizadoEm": agora_ms()}
+            if ant.get("events"):  # primeira vez só registra a base
+                msgs.append(f"{apelidos.get(codigo) or codigo}: {r['events'][0]['text']}")
+    if novos != anteriores:
+        gist_request(gist, "PATCH", {"files": {"rastreios.json": {"content": json.dumps(novos, ensure_ascii=False)}}})
+    return msgs
+
+
 def processar_notificacoes(gist, arquivos_gist):
     if not PUSH_PEM.exists():
         return
@@ -716,11 +840,15 @@ def processar_notificacoes(gist, arquivos_gist):
         anterior = controle.get("assinaturas")
         apelidos = {str(p.get("code", "")).upper(): p.get("name") for p in json_do_arquivo(arquivos_gist, "rastreazera.json", [])
                     if isinstance(p, dict) and not p.get("deleted") and p.get("name")}
-        if anterior is not None:  # na primeira busca só registra a base (não notifica o que já existia)
-            msgs = mensagens_de_novidades(anterior, atual, lojas_ok, apelidos)
-            if msgs:
-                mortos += enviar_push(inscricoes, payload_de(msgs))
-                print(f"Notificação: {len(msgs)} novidade(s) para {len(inscricoes)} aparelho(s)")
+        msgs = mensagens_de_novidades(anterior, atual, lojas_ok, apelidos) if anterior is not None else []
+        # na primeira busca só registra a base (não notifica o que já existia)
+        try:
+            msgs += atualizar_correios(gist, arquivos_gist, estado, apelidos)
+        except Exception as exc:  # noqa: BLE001 — 17TRACK fora do ar não impede o resto
+            print(f"17TRACK: {exc}", file=sys.stderr)
+        if msgs:
+            mortos += enviar_push(inscricoes, payload_de(msgs))
+            print(f"Notificação: {len(msgs)} novidade(s) para {len(inscricoes)} aparelho(s)")
         base = {cod: info for cod, info in (anterior or {}).items() if info["loja"] not in lojas_ok}
         base.update(atual)
         controle["assinaturas"] = base
