@@ -879,7 +879,10 @@ def processar_notificacoes(gist, arquivos_gist):
         gist_request(gist, "PATCH", {"files": {"push.json": {"content": json.dumps(vivos, indent=1)}}})
 
 
-FB_REPUBLICAR_MS = 2 * 60 * 1000  # sem novidade, republica fb.json mesmo assim (o celular mostra a hora da última conferência)
+FB_REPUBLICAR_MS = 10 * 60 * 1000  # sem novidade, republica fb.json mesmo assim (o celular mostra a hora da última conferência)
+# Freio de gravação (limite do GitHub por conta, dividido com os outros apps): fb.json sobe no máximo
+# a cada 2 min — o que chegar nesse meio-tempo vai junto. Os avisos push saem na hora, não dependem disto.
+FB_GRAVAR_MIN_MS = 2 * 60 * 1000
 
 
 def fb_texto(a):
@@ -953,8 +956,11 @@ def processar_fb(gist, arquivos_gist):
                              "cidade": a.get("cidade", ""), "foto": a.get("foto", ""), "regra": nome, "em": agora_ms()}
                             for a, nome in avisar]
             fb["avisos"] = (novos_avisos + fb.get("avisos", []))[:FB_AVISOS_MAX]
-        publicar = (fb.pop("publicar", False) or bool(avisar)
-                    or agora_ms() - fb.get("publicadoEm", 0) > FB_REPUBLICAR_MS)
+        quer = fb.pop("publicar", False) or bool(avisar)
+        desde = agora_ms() - fb.get("publicadoEm", 0)
+        publicar = (quer and desde >= FB_GRAVAR_MIN_MS) or desde > FB_REPUBLICAR_MS
+        if quer and not publicar:
+            fb["publicar"] = True  # fica pendente pra próxima rodada (sobe junto em até 2 min)
         if publicar:
             fb["publicadoEm"] = agora_ms()
         gravar_fb(fb)
