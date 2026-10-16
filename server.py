@@ -17,6 +17,7 @@ import re
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -506,6 +507,13 @@ GIST_INTERVALO_ATIVO_S = 10
 PEDIDO_CELULAR_VALIDADE_MS = 30 * 60 * 1000  # pedido antigo (PC estava desligado) não dispara busca
 COLETOR_SEM_RESPOSTA_MS = 150 * 1000          # o Coletor confere pedidos a cada 1 min
 _andamento_publicado = None                  # último andamento enviado (só envia quando muda)
+# Freio de gravação: o GitHub limita GRAVAÇÕES por conta (~80/min, ~500/h), dividido com os
+# outros apps da mesma conta (OLX, Ofertazera, Auto Radar, Gestão). Passando disso responde 403
+# e para de aceitar por um tempo. O andamento (que muda a cada etapa da busca) sobe no máximo a
+# cada 30 s; o resultado final (busca.json) sobe na hora. Bloqueado: espera o pedido ou 1 min,
+# dobrando até 15 min.
+GIST_GRAVAR_MIN_S = 30
+_andamento_gravado_em = 0.0
 
 
 def gist_request(gist, method="GET", corpo=None):
@@ -553,7 +561,7 @@ def montar_andamento(estado):
 
 def sincronizar_gist():
     """Uma rodada de sincronização. Devolve True se há busca/pedido em andamento (rodar de novo logo)."""
-    global _andamento_publicado
+    global _andamento_publicado, _andamento_gravado_em
     with LOCK:
         estado = ler_estado()
         atualizar_prazos(estado)
@@ -600,11 +608,12 @@ def sincronizar_gist():
     if busca.get("publicar") and ultima:
         arquivos["busca.json"] = {"content": json.dumps(ultima, ensure_ascii=False)}
     andamento = montar_andamento(estado)
-    if andamento != _andamento_publicado:
+    if andamento != _andamento_publicado and (arquivos or time.time() - _andamento_gravado_em >= GIST_GRAVAR_MIN_S):
         arquivos["andamento.json"] = {"content": json.dumps({**andamento, "ts": agora_ms()}, ensure_ascii=False)}
     if arquivos:
         gist_request(gist, "PATCH", {"files": arquivos})
-        _andamento_publicado = andamento
+        if "andamento.json" in arquivos:
+            _andamento_publicado, _andamento_gravado_em = andamento, time.time()
         if "busca.json" in arquivos:
             with LOCK:
                 estado = ler_estado()
@@ -937,17 +946,36 @@ def processar_fb(gist, arquivos_gist):
         gist_request(gist, "PATCH", {"files": {"push.json": {"content": json.dumps(vivos, indent=1)}}})
 
 
+def _espera_bloqueio(exc, espera):
+    """GitHub bloqueou (403/429 por limite)? Devolve quantos segundos esperar, senão None."""
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code not in (403, 429):
+        return None
+    pedido = int(exc.headers.get("Retry-After") or 0)
+    reset = (int(exc.headers.get("X-RateLimit-Reset") or 0) - time.time()) if exc.headers.get("X-RateLimit-Remaining") == "0" else 0
+    return max(pedido, reset, espera)
+
+
 def laco_gist():
+    espera = 60  # bloqueio do GitHub: espera o pedido ou 1 min, dobrando até 15 min
     while True:
         ativo = False
+        bloqueio = None
         try:
             ativo = sincronizar_gist()
         except Exception as exc:  # noqa: BLE001 — sem internet, token trocado...: tenta na próxima rodada
-            print(f"Gist: {exc}", file=sys.stderr)
-        try:
-            sincronizar_fb()
-        except Exception as exc:  # noqa: BLE001
-            print(f"FB Radar: {exc}", file=sys.stderr)
+            bloqueio = _espera_bloqueio(exc, espera)
+            print(f"Gist: {exc}" + (f" — GitHub bloqueou, tento de novo em {int(bloqueio)} s" if bloqueio else ""), file=sys.stderr)
+        if bloqueio is None:
+            try:
+                sincronizar_fb()
+            except Exception as exc:  # noqa: BLE001
+                bloqueio = _espera_bloqueio(exc, espera)
+                print(f"FB Radar: {exc}" + (f" — GitHub bloqueou, tento de novo em {int(bloqueio)} s" if bloqueio else ""), file=sys.stderr)
+        if bloqueio:
+            espera = min(espera * 2, 900)
+            time.sleep(bloqueio)
+            continue
+        espera = 60
         time.sleep(GIST_INTERVALO_ATIVO_S if ativo else GIST_INTERVALO_S)
 
 
