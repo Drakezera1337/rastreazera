@@ -198,6 +198,7 @@ def fb_publico(fb):
                    "proxima": agenda.get("proxima"), "em": agenda.get("em")},
         "cidades": fb["config"]["cidades"],
         "gistConfigurado": bool((fb.get("segredos") or {}).get("gist")),
+        "avisos": fb.get("avisos", []),
     }
 
 
@@ -902,12 +903,58 @@ def sincronizar_fb():
         processar_fb(gist, gist_request(gist).get("files") or {})
 
 
+FB_AVISOS_MAX = 60  # histórico de avisos mostrado na aba Notificações
+
+
+def regras_ativas(arquivos_gist):
+    """Regras criadas no app (aba Notificações → +), guardadas em regras.json no Gist do FB Radar."""
+    return [r for r in json_do_arquivo(arquivos_gist, "regras.json", []) if isinstance(r, dict) and r.get("ativo", True)]
+
+
+def casa_regra(a, r):
+    """O anúncio bate com a regra? Palavras: basta uma (cada uma pode ter várias palavras, todas no título);
+    "não pode ter": nenhuma; preço entre mín e máx (sem preço não passa quando há máximo); cidade na lista."""
+    titulo = sem_acento(a.get("titulo", ""))
+    termos = lambda campo: [sem_acento(p) for p in (r.get(campo) or []) if str(p).strip()]  # noqa: E731
+    contem = lambda termo: all(w in titulo for w in termo.split())  # noqa: E731
+    if termos("palavras") and not any(contem(t) for t in termos("palavras")):
+        return False
+    if any(contem(t) for t in termos("excluir")):
+        return False
+    preco = a.get("preco") or 0
+    if r.get("precoMin") and preco < float(r["precoMin"]):
+        return False
+    if r.get("precoMax") and (not preco or preco > float(r["precoMax"])):
+        return False
+    cidades = {sem_acento(c) for c in r.get("cidades") or []}
+    return not cidades or sem_acento(a.get("cidade", "")) in cidades
+
+
 def processar_fb(gist, arquivos_gist):
-    """Publica fb.json quando muda (ou a cada 15 min) e avisa os aparelhos de push.json dos anúncios novos."""
+    """Publica fb.json (a cada conferência) e avisa os aparelhos de push.json dos anúncios novos que batem
+    com alguma regra ativa (sem regras: todos os novos). Cada aviso entra no histórico (fb.json → avisos)."""
+    regras = regras_ativas(arquivos_gist)
     with LOCK:
         fb = ler_fb()
         pendentes = fb.pop("pendentesPush", [])
-        publicar = fb.pop("publicar", False) or agora_ms() - fb.get("publicadoEm", 0) > FB_REPUBLICAR_MS
+        avisar = []  # (anúncio, nome da regra)
+        for i in pendentes:
+            a = fb["anuncios"].get(i)
+            if not a:
+                continue
+            if not regras:
+                avisar.append((a, ""))
+                continue
+            regra = next((r for r in regras if casa_regra(a, r)), None)
+            if regra:
+                avisar.append((a, str(regra.get("nome") or "Regra")[:40]))
+        if avisar:
+            novos_avisos = [{"id": a["id"], "titulo": a.get("titulo", ""), "precoTexto": a.get("precoTexto", ""),
+                             "cidade": a.get("cidade", ""), "foto": a.get("foto", ""), "regra": nome, "em": agora_ms()}
+                            for a, nome in avisar]
+            fb["avisos"] = (novos_avisos + fb.get("avisos", []))[:FB_AVISOS_MAX]
+        publicar = (fb.pop("publicar", False) or bool(avisar)
+                    or agora_ms() - fb.get("publicadoEm", 0) > FB_REPUBLICAR_MS)
         if publicar:
             fb["publicadoEm"] = agora_ms()
         gravar_fb(fb)
@@ -925,18 +972,18 @@ def processar_fb(gist, arquivos_gist):
             testes[insc["endpoint"]] = insc["testeEm"]
             mortos += enviar_push([insc], {"title": "FB Radar", "body": "🔔 Teste: as notificações estão funcionando neste aparelho!",
                                            "tag": "fbradar-teste"})
-    novos = [fb["anuncios"][i] for i in pendentes if i in fb["anuncios"]]
-    if novos and inscricoes:
-        if len(novos) == 1:
-            a = novos[0]
-            payload = {"title": f"🎮 {a.get('precoTexto') or 'Novo anúncio'} · {a.get('titulo', '')[:50]}",
+    if avisar and inscricoes:
+        if len(avisar) == 1:
+            a, regra = avisar[0]
+            payload = {"title": f"{'🔔 ' + regra + ': ' if regra else '🎮 '}{a.get('precoTexto') or 'Novo anúncio'} · {a.get('titulo', '')[:50]}",
                        "body": f"{a.get('cidade', '')} — toque para abrir no Facebook", "tag": f"fbradar-{a['id']}",
                        "url": f"https://www.facebook.com/marketplace/item/{a['id']}/", "image": a.get("foto") or None}
         else:
-            corpo = "\n".join(fb_texto(a) for a in novos[:6]) + (f"\n…e mais {len(novos) - 6}" if len(novos) > 6 else "")
-            payload = {"title": f"🎮 {len(novos)} anúncios novos", "body": corpo, "tag": "fbradar-novos"}
+            linhas = [(f"[{regra}] " if regra else "") + fb_texto(a) for a, regra in avisar]
+            corpo = "\n".join(linhas[:6]) + (f"\n…e mais {len(linhas) - 6}" if len(linhas) > 6 else "")
+            payload = {"title": f"🎮 {len(avisar)} anúncios novos", "body": corpo, "tag": "fbradar-novos"}
         mortos += enviar_push(inscricoes, payload)
-        print(f"FB Radar: {len(novos)} anúncio(s) novo(s) para {len(inscricoes)} aparelho(s)")
+        print(f"FB Radar: {len(avisar)} aviso(s) para {len(inscricoes)} aparelho(s)")
     with LOCK:
         fb_atual = ler_fb()
         fb_atual["testesPush"] = testes
