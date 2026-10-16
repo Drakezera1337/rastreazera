@@ -327,3 +327,8 @@ dialog label.check input { width: 18px; height: 18px; margin: 0; accent-color: v
 
 /* Última e próxima busca */
 .info-busca { margin: 10px 2px 0; font-size: 0.8rem; color: var(--muted); }
+
+/* Sem zoom na página (pinça nem dois toques) — evita ampliar sem querer no
+   celular. O iPhone ignora o user-scalable=no do viewport; isto e o bloqueio
+   dos eventos "gesture*" no app.js cobrem ele. */
+html, body { touch-action: pan-x pan-y; }
