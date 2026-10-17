@@ -157,7 +157,7 @@ async function rodarBusca(origem) {
     }
     if (!pararSolicitado) resumo.olx = ativas.olx === false ? 'desmarcada' : 'pedida à extensão OLX';
   } finally {
-    if (abaColeta) { chrome.tabs.remove(abaColeta).catch(() => {}); abaColeta = null; }
+    fecharColeta();
     if (pararSolicitado) resumo.parada = true;
     await chrome.storage.local.set({ ultimoResultado: { ts: Date.now(), origem, ...resumo } });
     await chrome.storage.local.remove('emAndamento');
@@ -185,7 +185,11 @@ function esperarCarregar(tabId, limiteMs) {
   });
 }
 
-// Usa sempre a mesma aba em segundo plano (Shopee e depois AliExpress), fechada no fim da busca
+// Usa sempre a mesma aba em segundo plano (Shopee e depois AliExpress), fechada no fim da busca.
+// Com o Chrome aberto mas SEM nenhuma janela (rodando em segundo plano), tabs.create falha com
+// "No current window": aí a coleta abre numa janela própria minimizada, fechada junto com a aba.
+let janelaColeta = null;
+
 async function abrirNaAbaDeColeta(url) {
   if (abaColeta) {
     try {
@@ -193,8 +197,22 @@ async function abrirNaAbaDeColeta(url) {
       return abaColeta;
     } catch { abaColeta = null; }
   }
-  abaColeta = (await chrome.tabs.create({ url, active: false })).id;
+  const janelas = await chrome.windows.getAll({ windowTypes: ['normal'] });
+  if (janelas.length) {
+    abaColeta = (await chrome.tabs.create({ url, active: false })).id;
+  } else {
+    const janela = await chrome.windows.create({ url, focused: false, state: 'minimized' });
+    janelaColeta = janela.id;
+    abaColeta = janela.tabs[0].id;
+  }
   return abaColeta;
+}
+
+function fecharColeta() {
+  if (janelaColeta) chrome.windows.remove(janelaColeta).catch(() => {});
+  else if (abaColeta) chrome.tabs.remove(abaColeta).catch(() => {});
+  janelaColeta = null;
+  abaColeta = null;
 }
 
 async function coletarNaAba(loja) {
