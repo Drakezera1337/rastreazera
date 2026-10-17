@@ -60,8 +60,16 @@ chrome.runtime.onStartup.addListener(async () => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'busca' && (await estado()).ativo) rodarBusca('automática');
-  if (alarm.name === 'checar') { checarSolicitacao(); reportarAgenda(); }
+  if (alarm.name === 'checar') { checarSolicitacao(); reportarAgenda(); retomarAtrasada(); }
 });
+
+// Busca automática que não aconteceu: o Chrome abriu (ou o PC acordou) antes do server.py subir e a
+// tentativa falhou sem gravar ultimaBusca. Tenta de novo a cada minuto até o server.py responder,
+// em vez de esperar a próxima hora.
+async function retomarAtrasada() {
+  const { ativo, ultimaBusca } = await estado();
+  if (ativo && !rodando && Date.now() - ultimaBusca > INTERVALO_MIN * 60000) rodarBusca('busca atrasada');
+}
 
 // ---------- Painel (popup.html) ----------
 chrome.runtime.onMessage.addListener((msg, _sender, responder) => {
@@ -209,3 +217,20 @@ async function coletarNaAba(loja) {
   if (!result || result.erro) throw new Error(result?.erro || 'falha ao coletar');
   return result.ok;
 }
+
+// ---------- Manager ----------
+// O Manager (D:\Loja\Programa\Manager) pergunta a cada minuto se esta extensão está bem.
+// Só ele pode perguntar (id fixo pela "key" do manifest dele).
+const MANAGER_ID = 'hfllkpogjhbmnepbgfpdekbpppfonppi';
+chrome.runtime.onMessageExternal.addListener((msg, sender, responder) => {
+  if (sender.id !== MANAGER_ID || msg?.tipo !== 'manager:status') return;
+  (async () => {
+    const est = await estado();
+    const alarme = await chrome.alarms.get('busca');
+    return {
+      app: 'rastreazera', versao: chrome.runtime.getManifest().version, agora: Date.now(),
+      ...est, rodando, intervaloMin: INTERVALO_MIN, proxima: alarme?.scheduledTime || null,
+    };
+  })().then(responder, (e) => responder({ app: 'rastreazera', erro: String(e.message || e) }));
+  return true;
+});
